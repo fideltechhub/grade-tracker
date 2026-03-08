@@ -294,8 +294,8 @@ def change_password():
 
     # Save the new encrypted password
     conn = get_db()
-    conn.execute(
-        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
         "UPDATE users SET password = ? WHERE id = ?",
         (generate_password_hash(new_password), user["id"])
     )
