@@ -95,7 +95,7 @@ def init_db():
             "Administrator",
             "admin",
             "admin@gradevault.com",
-            generate_password_hash("admin12345"),  # password is encrypted
+            generate_password_hash("admin123"),  # password is encrypted
             "admin"
         ))
         conn.commit()
@@ -399,6 +399,53 @@ def admin_stats():
         "total_teachers": total_teachers,
         "total_grades":   total_grades,
         "overall_average": overall_avg
+    })
+
+
+# ============================================================
+# USERS API ENDPOINTS (admin only)
+# ============================================================
+
+@app.route("/api/admin/users", methods=["GET"])
+def get_all_users():
+    """Get all users in the system — admin only."""
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn = get_db()
+    users = conn.execute("""
+        SELECT id, fullname, username, email, role, subject, created_at
+        FROM users ORDER BY created_at DESC
+    """).fetchall()
+    conn.close()
+
+    return jsonify([dict(u) for u in users])
+
+
+@app.route("/api/admin/users/<int:user_id>/reset-password", methods=["POST"])
+def reset_user_password(user_id):
+    """Reset a user's password back to their username — admin only."""
+    admin = get_current_user()
+    if not admin or admin["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn = get_db()
+    # Get the user we want to reset
+    target_user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+    if not target_user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    # New password = their username
+    new_password = generate_password_hash(target_user["username"])
+    conn.execute("UPDATE users SET password = ? WHERE id = ?", (new_password, user_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": f"Password reset to username: {target_user['username']}"
     })
 
 
