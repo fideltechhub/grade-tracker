@@ -95,7 +95,7 @@ def init_db():
             "Administrator",
             "admin",
             "admin@gradevault.com",
-            generate_password_hash("admin123"),  # password is encrypted
+            generate_password_hash("admin12345"),  # password is encrypted
             "admin"
         ))
         conn.commit()
