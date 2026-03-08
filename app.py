@@ -649,6 +649,227 @@ def my_grades():
 
 
 # ============================================================
+# EDIT GRADE
+# ============================================================
+
+@app.route("/api/grades/<int:grade_id>", methods=["PUT"])
+def edit_grade(grade_id):
+    """Edit an existing grade — teachers and admin only."""
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data      = request.get_json()
+    grade     = data.get("grade")
+    max_grade = data.get("max_grade")
+    subject   = data.get("subject", "").strip()
+
+    if grade is None:
+        return jsonify({"error": "Grade is required"}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Verify grade exists
+    cursor.execute("SELECT * FROM grades WHERE id = %s", (grade_id,))
+    existing = cursor.fetchone()
+    if not existing:
+        cursor.close()
+        conn.close()
+        return jsonify({"error": "Grade not found"}), 404
+
+    # Build update query dynamically
+    updates = ["grade = %s"]
+    values  = [grade]
+    if max_grade is not None:
+        updates.append("max_grade = %s")
+        values.append(max_grade)
+    if subject:
+        updates.append("subject = %s")
+        values.append(subject)
+
+    values.append(grade_id)
+    cursor.execute(f"UPDATE grades SET {', '.join(updates)} WHERE id = %s", values)
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"message": "Grade updated successfully"})
+
+
+# ============================================================
+# SEARCH ENDPOINTS
+# ============================================================
+
+@app.route("/api/students/search", methods=["GET"])
+def search_students():
+    """Search students by name or email."""
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM students
+        WHERE LOWER(name) LIKE %s OR LOWER(email) LIKE %s
+        ORDER BY name
+    """, (f"%{query.lower()}%", f"%{query.lower()}%"))
+    students = cursor.fetchall()
+
+    result = []
+    for s in students:
+        cursor.execute("SELECT * FROM grades WHERE student_id = %s", (s["id"],))
+        grade_list = [dict(g) for g in cursor.fetchall()]
+        avg    = round(sum(g["grade"] for g in grade_list) / len(grade_list), 2) if grade_list else None
+        status = "Pass" if avg and avg >= 50 else ("Fail" if avg is not None else "No Grades")
+        result.append({
+            "id": s["id"], "name": s["name"], "email": s["email"],
+            "grades": grade_list, "average": avg, "status": status
+        })
+
+    cursor.close()
+    conn.close()
+    return jsonify(result)
+
+
+@app.route("/api/teachers/search", methods=["GET"])
+def search_teachers():
+    """Search teachers by name, username or subject — admin only."""
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM users
+        WHERE role = 'teacher' AND (
+            LOWER(fullname) LIKE %s OR
+            LOWER(username) LIKE %s OR
+            LOWER(subject)  LIKE %s
+        )
+        ORDER BY fullname
+    """, (f"%{query.lower()}%", f"%{query.lower()}%", f"%{query.lower()}%"))
+    teachers = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify([dict(t) for t in teachers])
+
+
+# ============================================================
+# REPORT ENDPOINTS
+# ============================================================
+
+@app.route("/api/my-report", methods=["GET"])
+def my_report():
+    """Return full report data for the logged in student."""
+    user = get_current_user()
+    if not user or user["role"] != "student":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM students WHERE email = %s", (user["email"],))
+    student = cursor.fetchone()
+
+    if not student:
+        cursor.close()
+        conn.close()
+        return jsonify({"error": "Student record not found"}), 404
+
+    cursor.execute("""
+        SELECT g.*, u.fullname as teacher_name
+        FROM grades g
+        LEFT JOIN users u ON g.teacher_id = u.id
+        WHERE g.student_id = %s
+        ORDER BY g.created_at DESC
+    """, (student["id"],))
+    grade_list = [dict(g) for g in cursor.fetchall()]
+    avg    = round(sum(g["grade"] for g in grade_list) / len(grade_list), 2) if grade_list else None
+    status = "Pass" if avg and avg >= 50 else ("Fail" if avg is not None else "No Grades")
+
+    # Subject breakdown
+    subjects = {}
+    for g in grade_list:
+        subj = g["subject"]
+        if subj not in subjects:
+            subjects[subj] = []
+        subjects[subj].append(g["grade"])
+    subject_avgs = {s: round(sum(v)/len(v), 2) for s, v in subjects.items()}
+
+    cursor.close()
+    conn.close()
+    return jsonify({
+        "student":      dict(student),
+        "fullname":     user["fullname"],
+        "email":        user["email"],
+        "grades":       grade_list,
+        "average":      avg,
+        "status":       status,
+        "subject_avgs": subject_avgs,
+        "total_grades": len(grade_list)
+    })
+
+
+@app.route("/api/admin/school-report", methods=["GET"])
+def school_report():
+    """Return full school report — admin only."""
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # All students with their averages
+    cursor.execute("SELECT * FROM students ORDER BY name")
+    students = cursor.fetchall()
+
+    student_data = []
+    for s in students:
+        cursor.execute("SELECT grade FROM grades WHERE student_id = %s", (s["id"],))
+        grades = [g["grade"] for g in cursor.fetchall()]
+        avg    = round(sum(grades) / len(grades), 2) if grades else None
+        status = "Pass" if avg and avg >= 50 else ("Fail" if avg is not None else "No Grades")
+        student_data.append({
+            "name": s["name"], "email": s["email"],
+            "average": avg, "status": status,
+            "total_grades": len(grades)
+        })
+
+    # Teacher count
+    cursor.execute("SELECT COUNT(*) as c FROM users WHERE role='teacher'")
+    total_teachers = cursor.fetchone()["c"]
+
+    # Overall stats
+    cursor.execute("SELECT grade FROM grades")
+    all_grades = [g["grade"] for g in cursor.fetchall()]
+    overall_avg = round(sum(all_grades) / len(all_grades), 2) if all_grades else 0
+    passing = sum(1 for s in student_data if s["status"] == "Pass")
+    failing = sum(1 for s in student_data if s["status"] == "Fail")
+
+    cursor.close()
+    conn.close()
+    return jsonify({
+        "students":        student_data,
+        "total_students":  len(student_data),
+        "total_teachers":  total_teachers,
+        "total_grades":    len(all_grades),
+        "overall_average": overall_avg,
+        "passing":         passing,
+        "failing":         failing
+    })
+
+
+# ============================================================
 # START
 # ============================================================
 
