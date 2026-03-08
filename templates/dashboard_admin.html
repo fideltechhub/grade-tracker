@@ -184,6 +184,14 @@
 
   async function addTeacher() {
     const msg = document.getElementById("teacher-msg");
+    // Validate email format
+    const email = document.getElementById("t-email").value.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      msg.textContent = "Please enter a valid email e.g. teacher@school.ac.ke";
+      msg.className = "msg error";
+      return;
+    }
     const res = await api("POST", "/api/admin/teachers", {
       fullname: document.getElementById("t-name").value.trim(),
       username: document.getElementById("t-username").value.trim(),
