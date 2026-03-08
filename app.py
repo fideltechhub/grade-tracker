@@ -361,6 +361,7 @@ def delete_teacher(teacher_id):
         return jsonify({"error": "Unauthorized"}), 403
 
     conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("DELETE FROM users WHERE id = ? AND role = 'teacher'", (teacher_id,))
     conn.commit()
     conn.close()
