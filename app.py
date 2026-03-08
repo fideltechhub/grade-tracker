@@ -523,8 +523,8 @@ def add_grade():
         return jsonify({"error": "Grade must be between 0 and max_grade"}), 400
 
     conn = get_db()
-    conn.execute(
-        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
         "INSERT INTO grades (student_id, subject, grade, max_grade, teacher_id) VALUES (?, ?, ?, ?, ?)",
         (student_id, subject, grade, max_grade, user["id"])
     )
