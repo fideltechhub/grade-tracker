@@ -295,6 +295,7 @@ def change_password():
     # Save the new encrypted password
     conn = get_db()
     conn.execute(
+        conn.execute("PRAGMA journal_mode=WAL")
         "UPDATE users SET password = ? WHERE id = ?",
         (generate_password_hash(new_password), user["id"])
     )
@@ -462,11 +463,13 @@ def add_student():
         if not existing_user:
             # Auto-create a login account for this student
             conn.execute("""
+            conn.execute("PRAGMA journal_mode=WAL")
                 INSERT INTO users (fullname, username, email, password, role)
                 VALUES (?, ?, ?, ?, 'student')
             """, (name, username, email, default_password))
 
         # Add student to the students table
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("INSERT INTO students (name, email) VALUES (?, ?)", (name, email))
         conn.commit()
 
@@ -493,6 +496,7 @@ def delete_student(student_id):
         return jsonify({"error": "Unauthorized"}), 403
 
     conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("DELETE FROM grades WHERE student_id = ?", (student_id,))
     conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
     conn.commit()
@@ -520,6 +524,7 @@ def add_grade():
 
     conn = get_db()
     conn.execute(
+        conn.execute("PRAGMA journal_mode=WAL")
         "INSERT INTO grades (student_id, subject, grade, max_grade, teacher_id) VALUES (?, ?, ?, ?, ?)",
         (student_id, subject, grade, max_grade, user["id"])
     )
