@@ -208,6 +208,13 @@
     const email=document.getElementById("student-email").value.trim();
     const msg=document.getElementById("student-msg");
     if (!name||!email){msg.textContent="Please fill in both fields.";msg.className="msg error";return;}
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      msg.textContent = "Please enter a valid email e.g. jane@school.ac.ke";
+      msg.className = "msg error";
+      return;
+    }
     const res=await api("POST","/api/students",{name,email});
     if(res.error){msg.textContent=res.error;msg.className="msg error";}
     else{msg.textContent="✓ "+name+" added!";msg.className="msg success";showToast(name+" added!");loadStudentsTab();}
