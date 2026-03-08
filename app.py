@@ -30,8 +30,9 @@ DB_PATH = "grades.db"
 
 def get_db():
     """Opens a connection to the database."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")  # prevents database locked errors
     return conn
 
 
@@ -233,6 +234,11 @@ def api_register():
     if not fullname or not username or not email or not password:
         return jsonify({"error": "All fields are required"}), 400
 
+    # Validate email format on the server side too
+    email_regex = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+    if not re.match(email_regex, email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
@@ -294,7 +300,6 @@ def change_password():
 
     # Save the new encrypted password
     conn = get_db()
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         "UPDATE users SET password = ? WHERE id = ?",
         (generate_password_hash(new_password), user["id"])
@@ -341,6 +346,11 @@ def add_teacher():
     if not fullname or not username or not email or not password or not subject:
         return jsonify({"error": "All fields are required"}), 400
 
+    # Validate email format
+    email_regex = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+    if not re.match(email_regex, email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+
     try:
         conn = get_db()
         conn.execute("""
@@ -362,7 +372,6 @@ def delete_teacher(teacher_id):
         return jsonify({"error": "Unauthorized"}), 403
 
     conn = get_db()
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("DELETE FROM users WHERE id = ? AND role = 'teacher'", (teacher_id,))
     conn.commit()
     conn.close()
@@ -463,13 +472,11 @@ def add_student():
         if not existing_user:
             # Auto-create a login account for this student
             conn.execute("""
-            conn.execute("PRAGMA journal_mode=WAL")
                 INSERT INTO users (fullname, username, email, password, role)
                 VALUES (?, ?, ?, ?, 'student')
             """, (name, username, email, default_password))
 
         # Add student to the students table
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("INSERT INTO students (name, email) VALUES (?, ?)", (name, email))
         conn.commit()
 
@@ -496,7 +503,6 @@ def delete_student(student_id):
         return jsonify({"error": "Unauthorized"}), 403
 
     conn = get_db()
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("DELETE FROM grades WHERE student_id = ?", (student_id,))
     conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
     conn.commit()
@@ -523,8 +529,7 @@ def add_grade():
         return jsonify({"error": "Grade must be between 0 and max_grade"}), 400
 
     conn = get_db()
-    conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
+    conn.execute(
         "INSERT INTO grades (student_id, subject, grade, max_grade, teacher_id) VALUES (?, ?, ?, ?, ?)",
         (student_id, subject, grade, max_grade, user["id"])
     )
@@ -614,4 +619,5 @@ def my_grades():
 
 if __name__ == "__main__":
     init_db()
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
