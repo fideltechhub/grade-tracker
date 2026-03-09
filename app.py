@@ -8,9 +8,48 @@ import psycopg2
 import psycopg2.extras
 import re
 import os
+import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = "gradevault_secret_key_2024"
+
+# ============================================================
+# EMAIL CONFIG (Gmail SMTP)
+# ============================================================
+MAIL_HOST     = "smtp.gmail.com"
+MAIL_PORT     = 587
+MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "fdhrpdgpjwgbmkws")
+MAIL_FROM     = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
+APP_BASE_URL  = os.environ.get("APP_BASE_URL", "http://localhost:5000")
+
+def send_reset_email(to_email, token):
+    """Send password reset email via Gmail SMTP."""
+    reset_link = f"{APP_BASE_URL}/reset-password?token={token}"
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "GradeVault — Password Reset Request"
+    msg["From"]    = f"GradeVault <{MAIL_FROM}>"
+    msg["To"]      = to_email
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#0f1117;color:#f0f0f0;border-radius:12px;padding:2rem">
+      <h2 style="color:#f5c518;margin-bottom:0.5rem">🔑 Password Reset</h2>
+      <p style="color:#aaa;margin-bottom:1.5rem">You requested a password reset for your GradeVault account.</p>
+      <a href="{reset_link}" style="display:inline-block;background:#f5c518;color:#0f1117;font-weight:700;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:1rem">Reset My Password</a>
+      <p style="color:#666;font-size:0.8rem;margin-top:1.5rem">This link expires in <strong style="color:#aaa">30 minutes</strong>. If you didn't request this, ignore this email.</p>
+      <p style="color:#444;font-size:0.75rem;margin-top:1rem">— GradeVault System</p>
+    </div>
+    """
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(MAIL_HOST, MAIL_PORT) as server:
+        server.starttls()
+        server.login(MAIL_USERNAME, MAIL_PASSWORD)
+        server.sendmail(MAIL_FROM, to_email, msg.as_string())
 
 # ============================================================
 # DATABASE HELPERS
@@ -75,6 +114,18 @@ def init_db():
     # Add comment column if it doesn't exist (for existing databases)
     cursor.execute("""
         ALTER TABLE grades ADD COLUMN IF NOT EXISTS comment TEXT
+    """)
+
+    # Password reset tokens table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            token TEXT UNIQUE NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            used BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
     """)
 
     conn.commit()
@@ -165,6 +216,100 @@ def home():
     if user:
         return redirect(url_for(user["role"] + "_dashboard"))
     return redirect(url_for("login_page"))
+
+
+# ============================================================
+# PASSWORD RESET ROUTES
+# ============================================================
+
+@app.route("/forgot-password")
+def forgot_password_page():
+    return render_template("forgot_password.html")
+
+@app.route("/reset-password")
+def reset_password_page():
+    token = request.args.get("token", "")
+    return render_template("reset_password.html", token=token)
+
+@app.route("/api/forgot-password", methods=["POST"])
+def forgot_password():
+    data  = request.get_json()
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, fullname, email FROM users WHERE LOWER(email) = %s", (email,))
+    user = cursor.fetchone()
+
+    # Always return success to prevent email enumeration
+    if not user:
+        cursor.close(); conn.close()
+        return jsonify({"message": "If that email exists, a reset link has been sent."})
+
+    # Generate secure token, expires in 30 minutes
+    token      = secrets.token_urlsafe(48)
+    expires_at = datetime.utcnow() + timedelta(minutes=30)
+
+    # Invalidate any existing tokens for this user
+    cursor.execute("UPDATE password_reset_tokens SET used = TRUE WHERE user_id = %s AND used = FALSE", (user["id"],))
+    cursor.execute(
+        "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)",
+        (user["id"], token, expires_at)
+    )
+    conn.commit()
+    cursor.close(); conn.close()
+
+    try:
+        send_reset_email(user["email"], token)
+    except Exception as e:
+        print(f"Email error: {e}")
+        return jsonify({"error": "Failed to send email. Please try again later."}), 500
+
+    return jsonify({"message": "If that email exists, a reset link has been sent."})
+
+
+@app.route("/api/reset-password", methods=["POST"])
+def reset_password():
+    data     = request.get_json()
+    token    = data.get("token", "").strip()
+    password = data.get("password", "")
+
+    if not token or not password:
+        return jsonify({"error": "Token and password are required"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT t.id, t.user_id, t.expires_at, t.used
+        FROM password_reset_tokens t
+        WHERE t.token = %s
+    """, (token,))
+    record = cursor.fetchone()
+
+    if not record:
+        cursor.close(); conn.close()
+        return jsonify({"error": "Invalid or expired reset link."}), 400
+    if record["used"]:
+        cursor.close(); conn.close()
+        return jsonify({"error": "This reset link has already been used."}), 400
+    if datetime.utcnow() > record["expires_at"]:
+        cursor.close(); conn.close()
+        return jsonify({"error": "This reset link has expired. Please request a new one."}), 400
+
+    # Update password and mark token as used
+    cursor.execute(
+        "UPDATE users SET password = %s WHERE id = %s",
+        (generate_password_hash(password), record["user_id"])
+    )
+    cursor.execute("UPDATE password_reset_tokens SET used = TRUE WHERE id = %s", (record["id"],))
+    conn.commit()
+    cursor.close(); conn.close()
+
+    return jsonify({"message": "Password reset successfully! You can now log in."})
 
 
 @app.route("/login")
