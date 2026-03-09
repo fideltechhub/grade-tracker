@@ -398,6 +398,39 @@ def add_teacher():
         return jsonify({"error": "Username or email already exists"}), 409
 
 
+@app.route("/api/admin/teachers/<int:teacher_id>/subjects", methods=["PATCH"])
+def update_teacher_subjects(teacher_id):
+    """Update subjects assigned to a teacher — admin only."""
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data = request.get_json()
+    subject = data.get("subject", "").strip()
+
+    # Validate at least one subject
+    subject_list = [s.strip() for s in subject.split(",") if s.strip()]
+    if not subject_list:
+        return jsonify({"error": "Please select at least one subject"}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE id = %s AND role = 'teacher'", (teacher_id,))
+    if not cursor.fetchone():
+        cursor.close()
+        conn.close()
+        return jsonify({"error": "Teacher not found"}), 404
+
+    cursor.execute(
+        "UPDATE users SET subject = %s WHERE id = %s AND role = 'teacher'",
+        (",".join(subject_list), teacher_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"message": "Subjects updated successfully"})
+
+
 @app.route("/api/admin/teachers/<int:teacher_id>", methods=["DELETE"])
 def delete_teacher(teacher_id):
     user = get_current_user()
