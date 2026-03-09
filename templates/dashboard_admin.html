@@ -109,12 +109,24 @@
         </div>
       </div>
 
-      <!-- Row 3: Subjects (full width) -->
-      <div style="margin-bottom:1.2rem">
-        <label style="font-size:0.75rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono)">
+      <!-- Row 3: Subjects dropdown -->
+      <div style="margin-bottom:1.2rem;position:relative">
+        <label style="font-size:0.75rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono);display:block;margin-bottom:6px">
           Subjects <span style="color:var(--muted);font-size:0.72rem;text-transform:none;letter-spacing:0;font-family:var(--font-display);font-weight:400">(select one or more)</span>
         </label>
-        <div id="subject-checkboxes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;margin-top:8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px">
+
+        <!-- Dropdown trigger -->
+        <div id="subject-dropdown-trigger" onclick="toggleSubjectDropdown()"
+          style="display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px 14px;cursor:pointer;user-select:none;transition:border-color 0.2s">
+          <span id="subject-dropdown-label" style="font-size:0.9rem;color:var(--muted);font-family:var(--font-display)">Select subjects...</span>
+          <svg id="subject-dropdown-arrow" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px;color:var(--muted);transition:transform 0.2s;flex-shrink:0">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+
+        <!-- Dropdown panel -->
+        <div id="subject-checkboxes"
+          style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-top:4px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;box-shadow:0 8px 32px rgba(0,0,0,0.4);max-height:320px;overflow-y:auto">
           <!-- populated by JS -->
         </div>
       </div>
@@ -557,13 +569,53 @@
   }
 
   // ── Add teacher ──
+  // ── Subject dropdown toggle ──
+  let subjectDropdownOpen = false;
+
+  function toggleSubjectDropdown() {
+    subjectDropdownOpen = !subjectDropdownOpen;
+    const panel  = document.getElementById("subject-checkboxes");
+    const arrow  = document.getElementById("subject-dropdown-arrow");
+    const trigger = document.getElementById("subject-dropdown-trigger");
+    panel.style.display  = subjectDropdownOpen ? "grid" : "none";
+    arrow.style.transform = subjectDropdownOpen ? "rotate(180deg)" : "rotate(0deg)";
+    trigger.style.borderColor = subjectDropdownOpen ? "var(--accent)" : "var(--border)";
+  }
+
+  // Close dropdown when clicking outside
+  document.addEventListener("click", function(e) {
+    if (!document.getElementById("subject-dropdown-trigger")?.contains(e.target) &&
+        !document.getElementById("subject-checkboxes")?.contains(e.target)) {
+      const panel = document.getElementById("subject-checkboxes");
+      const arrow = document.getElementById("subject-dropdown-arrow");
+      const trigger = document.getElementById("subject-dropdown-trigger");
+      if (panel) panel.style.display = "none";
+      if (arrow) arrow.style.transform = "rotate(0deg)";
+      if (trigger) trigger.style.borderColor = "var(--border)";
+      subjectDropdownOpen = false;
+    }
+  });
+
+  function updateSubjectDropdownLabel() {
+    const checked = [...document.querySelectorAll('input[name="t-subject"]:checked')].map(cb => cb.value);
+    const label = document.getElementById("subject-dropdown-label");
+    if (!label) return;
+    if (!checked.length) {
+      label.textContent = "Select subjects...";
+      label.style.color = "var(--muted)";
+    } else {
+      label.textContent = checked.join(", ");
+      label.style.color = "var(--text)";
+    }
+  }
+
   // ── Load CBC subjects into checkboxes ──
   async function loadSubjectCheckboxes() {
     const subjects = await api("GET", "/api/cbc-subjects");
     const container = document.getElementById("subject-checkboxes");
     container.innerHTML = subjects.map(s => `
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;cursor:pointer;padding:4px 6px;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
-        <input type="checkbox" name="t-subject" value="${escHtml(s)}" style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer"/>
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;cursor:pointer;padding:6px 8px;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+        <input type="checkbox" name="t-subject" value="${escHtml(s)}" style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer" onchange="updateSubjectDropdownLabel()"/>
         ${escHtml(s)}
       </label>`).join("");
   }
@@ -588,6 +640,7 @@
       msg.textContent="✓ Teacher added!"; msg.className="msg success";
       showToast("Teacher added!"); loadTeachers(); loadOverview();
       document.querySelectorAll('input[name="t-subject"]').forEach(cb => cb.checked = false);
+      updateSubjectDropdownLabel();
     }
   }
 
