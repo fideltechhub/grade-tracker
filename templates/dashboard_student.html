@@ -255,7 +255,7 @@
           <div class="progress-fill ${fillClass}" style="width:${avg}%"></div>
         </div>
         <table class="grc-table">
-          <thead><tr><th>Score</th><th>Out of</th><th>Percentage</th><th>Date</th><th>Feedback</th></tr></thead>
+          <thead><tr><th>Score</th><th>Out of</th><th>Percentage</th><th>Date</th><th>Teacher's Feedback</th></tr></thead>
           <tbody>
             ${grades.map(g => {
               const pct  = Math.round((g.grade / g.max_grade) * 100);
@@ -384,7 +384,7 @@
               <th style="text-align:left;padding:8px 12px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Percentage</th>
               <th style="text-align:left;padding:8px 12px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Grade</th>
               <th style="text-align:left;padding:8px 12px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Date</th>
-              <th style="text-align:left;padding:8px 12px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Feedback</th>
+              <th style="text-align:left;padding:8px 12px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Teacher's Feedback</th>
             </tr>
           </thead>
           <tbody>
