@@ -15,6 +15,13 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
+@app.route("/test-email")
+def test_email():
+    try:
+        send_reset_email("fidelclinton4@gmail.com", "testtoken123")
+        return "EMAIL SENT OK"
+    except Exception as e:
+        return f"EMAIL FAILED: {type(e).__name__}: {e}"
 app.secret_key = "gradevault_secret_key_2024"
 
 # ============================================================
