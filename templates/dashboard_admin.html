@@ -206,6 +206,23 @@
   </div>
 
 </main>
+<!-- Subject Editor Modal -->
+<div class="modal-overlay" id="subject-editor-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:2rem;width:100%;max-width:480px;margin:1rem;animation:fadeUp 0.2s ease">
+    <h3 style="font-size:1.1rem;font-weight:800;margin-bottom:0.4rem">✏️ Edit Subjects</h3>
+    <p id="subject-editor-name" style="color:var(--muted);font-size:0.82rem;font-family:var(--font-mono);margin-bottom:1.2rem"></p>
+    <input type="hidden" id="subject-editor-teacher-id"/>
+    <div id="subject-editor-checkboxes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:1rem">
+      <!-- populated by JS -->
+    </div>
+    <div id="subject-editor-msg" style="display:none;color:#f7604f;font-size:0.82rem;font-family:var(--font-mono);margin-bottom:0.8rem"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn-primary" style="flex:1" onclick="saveTeacherSubjects()">Save Subjects</button>
+      <button class="btn-danger" style="flex:1" onclick="closeSubjectEditor()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 <script>
   let allTeachers = [], allStudents = [];
@@ -293,7 +310,12 @@
         <td style="font-weight:600">${escHtml(t.fullname)}</td>
         <td style="font-family:var(--font-mono)">${escHtml(t.username)}</td>
         <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">${escHtml(t.email)}</td>
-        <td style="max-width:200px">${t.subject ? t.subject.split(',').map(s=>`<span class="subject-chip" style="display:inline-block;margin:2px 2px">${escHtml(s.trim())}</span>`).join('') : '—'}</td>
+        <td style="max-width:240px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            ${t.subject ? t.subject.split(',').map(s=>`<span class="subject-chip" style="display:inline-block;margin:2px 2px">${escHtml(s.trim())}</span>`).join('') : '<span style="color:var(--muted);font-size:0.8rem">—</span>'}
+            <button class="btn-primary" style="padding:3px 10px;font-size:0.75rem;white-space:nowrap" onclick="openSubjectEditor(${t.id}, '${escHtml(t.fullname)}', '${escHtml(t.subject||'')}')">✏️ Edit</button>
+          </div>
+        </td>
         <td><button class="btn-danger" onclick="deleteTeacher(${t.id})">Delete</button></td>
         <td><button class="btn-primary" onclick="resetPassword(${t.id},'${escHtml(t.username)}')">Reset PW</button></td>
       </tr>`).join("");
@@ -594,6 +616,66 @@
   }
 
   async function logout() { await api("POST","/api/logout"); window.location.href="/login"; }
+
+  // ── Subject Editor Modal ──
+  let cbcSubjectsList = [];
+
+  async function openSubjectEditor(teacherId, teacherName, currentSubjects) {
+    document.getElementById("subject-editor-teacher-id").value = teacherId;
+    document.getElementById("subject-editor-name").textContent = "Teacher: " + teacherName;
+    const msgEl = document.getElementById("subject-editor-msg");
+    msgEl.style.display = "none"; msgEl.textContent = "";
+
+    // Load CBC subjects if not already loaded
+    if (!cbcSubjectsList.length) {
+      cbcSubjectsList = await api("GET", "/api/cbc-subjects");
+    }
+
+    const current = currentSubjects ? currentSubjects.split(",").map(s => s.trim()) : [];
+    const container = document.getElementById("subject-editor-checkboxes");
+    container.innerHTML = cbcSubjectsList.map(s => `
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;cursor:pointer;padding:4px 6px;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+        <input type="checkbox" name="edit-subject" value="${escHtml(s)}" ${current.includes(s) ? 'checked' : ''} style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer"/>
+        ${escHtml(s)}
+      </label>`).join("");
+
+    const modal = document.getElementById("subject-editor-modal");
+    modal.style.display = "flex";
+  }
+
+  function closeSubjectEditor() {
+    document.getElementById("subject-editor-modal").style.display = "none";
+  }
+
+  // Close on backdrop click
+  document.getElementById("subject-editor-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeSubjectEditor();
+  });
+
+  async function saveTeacherSubjects() {
+    const teacherId = document.getElementById("subject-editor-teacher-id").value;
+    const checked = [...document.querySelectorAll('input[name="edit-subject"]:checked')].map(cb => cb.value);
+    const msgEl = document.getElementById("subject-editor-msg");
+
+    if (!checked.length) {
+      msgEl.textContent = "Please select at least one subject.";
+      msgEl.style.display = "block";
+      return;
+    }
+
+    const res = await api("PATCH", "/api/admin/teachers/" + teacherId + "/subjects", {
+      subject: checked.join(",")
+    });
+
+    if (res.error) {
+      msgEl.textContent = res.error;
+      msgEl.style.display = "block";
+    } else {
+      showToast("Subjects updated!");
+      closeSubjectEditor();
+      loadTeachers();
+    }
+  }
 
   loadOverview();
   loadSubjectCheckboxes();
