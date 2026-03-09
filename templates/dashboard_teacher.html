@@ -204,7 +204,7 @@
 <!-- Edit Grade Modal -->
 <div class="modal-overlay" id="edit-modal">
   <div class="modal">
-    <h3>✏️ Edit Grade</h3>
+    <h3>✏️ Update Grade</h3>
     <input type="hidden" id="edit-grade-id"/>
     <div style="margin-bottom:1rem">
       <label class="modal-label">Subject</label>
@@ -225,8 +225,9 @@
       <textarea class="modal-input" id="edit-comment" maxlength="500" placeholder="e.g. Well done! Keep it up." style="resize:vertical;min-height:68px;margin-top:4px" oninput="document.getElementById('edit-comment-count').textContent=500-this.value.length"></textarea>
       <span id="edit-comment-count" style="font-size:0.72rem;font-family:var(--font-mono);color:var(--muted);float:right">500</span>
     </div>
+    <div id="edit-modal-msg" style="display:none;background:rgba(247,96,79,0.1);border:1px solid rgba(247,96,79,0.3);color:#f7604f;border-radius:8px;padding:8px 12px;font-size:0.82rem;font-family:var(--font-mono);margin-bottom:0.8rem"></div>
     <div class="modal-actions">
-      <button class="btn-primary" onclick="saveEditGrade()">Save Changes</button>
+      <button class="btn-primary" id="save-edit-btn" onclick="saveEditGrade()">Update Grade</button>
       <button class="btn-danger" onclick="closeEditModal()">Cancel</button>
     </div>
   </div>
@@ -398,7 +399,7 @@
             <td style="padding:6px 8px;font-family:var(--font-mono)">${g.grade}/${g.max_grade}</td>
             <td style="padding:6px 8px;font-family:var(--font-mono);color:${pct>=50?'var(--green)':'var(--red)'}">${pct}%</td>
             <td style="padding:6px 8px;max-width:200px">${g.comment ? `<span style="font-size:0.8rem;color:var(--muted);font-style:italic" title="${escHtml(g.comment)}">💬 ${escHtml(g.comment.length>40?g.comment.substring(0,40)+'…':g.comment)}</span>` : '<span style="color:var(--border);font-size:0.75rem;font-family:var(--font-mono)">—</span>'}</td>
-            <td style="padding:6px 8px"><button class="btn-primary" onclick="openEditModal(${g.id},'${escHtml(g.subject)}',${g.grade},${g.max_grade},${JSON.stringify(g.comment||'')})">Edit</button></td>
+            <td style="padding:6px 8px"><button class="btn-primary" onclick="openEditModal(${g.id},'${escHtml(g.subject)}',${g.grade},${g.max_grade},${JSON.stringify(g.comment||'')})">Update Grade</button></td>
             <td style="padding:6px 8px"><button class="btn-danger" onclick="deleteGrade(${g.id})">Remove</button></td>
           </tr>`; }).join("")}
           </tbody>
@@ -414,6 +415,10 @@
     document.getElementById("edit-max-val").value   = maxGrade;
     document.getElementById("edit-comment").value   = comment || "";
     document.getElementById("edit-comment-count").textContent = 500 - (comment ? comment.length : 0);
+    const msgEl = document.getElementById("edit-modal-msg");
+    msgEl.style.display = "none"; msgEl.textContent = "";
+    document.getElementById("save-edit-btn").textContent = "Update Grade";
+    document.getElementById("save-edit-btn").disabled = false;
     document.getElementById("edit-modal").classList.add("open");
   }
   function closeEditModal() { document.getElementById("edit-modal").classList.remove("open"); }
@@ -425,10 +430,41 @@
     const grade    = parseFloat(document.getElementById("edit-grade-val").value);
     const maxGrade = parseFloat(document.getElementById("edit-max-val").value);
     const comment  = document.getElementById("edit-comment").value.trim();
-    if (!subject || isNaN(grade) || isNaN(maxGrade)) { showToast("Please fill all fields","error"); return; }
-    const res = await api("PUT", "/api/grades/"+id, { subject, grade, max_grade: maxGrade, comment: comment || null });
-    if (res.error) { showToast(res.error,"error"); }
-    else { showToast("Grade updated!"); closeEditModal(); loadGradesTab(); loadOverview(); }
+    const msgEl    = document.getElementById("edit-modal-msg");
+    const btn      = document.getElementById("save-edit-btn");
+
+    // Clear previous error
+    msgEl.style.display = "none"; msgEl.textContent = "";
+
+    if (!id)                          { msgEl.textContent="Grade ID missing. Please close and try again."; msgEl.style.display="block"; return; }
+    if (!subject)                     { msgEl.textContent="Subject is required."; msgEl.style.display="block"; return; }
+    if (isNaN(grade) || grade < 0)    { msgEl.textContent="Please enter a valid grade score."; msgEl.style.display="block"; return; }
+    if (isNaN(maxGrade) || maxGrade < 1) { msgEl.textContent="Please enter a valid max grade."; msgEl.style.display="block"; return; }
+    if (grade > maxGrade)             { msgEl.textContent="Grade scored cannot exceed the max grade."; msgEl.style.display="block"; return; }
+
+    // Loading state
+    btn.textContent = "Saving...";
+    btn.disabled = true;
+
+    try {
+      const res = await api("PUT", "/api/grades/"+id, { subject, grade, max_grade: maxGrade, comment: comment || null });
+      if (res.error) {
+        msgEl.textContent = res.error;
+        msgEl.style.display = "block";
+        btn.textContent = "Update Grade";
+        btn.disabled = false;
+      } else {
+        showToast("Grade updated!");
+        closeEditModal();
+        loadGradesTab();
+        loadOverview();
+      }
+    } catch(err) {
+      msgEl.textContent = "Network error. Please try again.";
+      msgEl.style.display = "block";
+      btn.textContent = "Update Grade";
+      btn.disabled = false;
+    }
   }
 
   // ── Charts ──
