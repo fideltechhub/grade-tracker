@@ -37,38 +37,54 @@ MAIL_PORT     = 587
 MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
 MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "fdhrpdgpjwgbmkws")
 MAIL_FROM     = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
-APP_BASE_URL  = os.environ.get("APP_BASE_URL", "http://localhost:5000")
+APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://grade-tracker-latest.onrender.com")
 
 def send_reset_email(to_email, token):
     """Send password reset email via Gmail SMTP."""
     reset_link = f"{APP_BASE_URL}/reset-password?token={token}"
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "GradeVault — Password Reset Request"
     msg["From"]    = f"GradeVault <{MAIL_FROM}>"
     msg["To"]      = to_email
 
+    text = f"Reset your GradeVault password:\n{reset_link}\n\nExpires in 30 minutes. Ignore if you did not request this."
+
     html = f"""
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#0f1117;color:#f0f0f0;border-radius:12px;padding:2rem">
-      <h2 style="color:#f5c518;margin-bottom:0.5rem">🔑 Password Reset</h2>
+      <h2 style="color:#f5c518;margin-bottom:0.5rem">Password Reset</h2>
       <p style="color:#aaa;margin-bottom:1.5rem">You requested a password reset for your GradeVault account.</p>
       <a href="{reset_link}" style="display:inline-block;background:#f5c518;color:#0f1117;font-weight:700;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:1rem">Reset My Password</a>
       <p style="color:#666;font-size:0.8rem;margin-top:1.5rem">This link expires in <strong style="color:#aaa">30 minutes</strong>. If you didn't request this, ignore this email.</p>
+      <p style="color:#888;font-size:0.75rem;margin-top:0.5rem">Or copy this link: {reset_link}</p>
       <p style="color:#444;font-size:0.75rem;margin-top:1rem">— GradeVault System</p>
     </div>
     """
+    msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
 
     print(f"[EMAIL DEBUG] Attempting to send to: {to_email}")
     print(f"[EMAIL DEBUG] MAIL_USERNAME: {MAIL_USERNAME}")
     print(f"[EMAIL DEBUG] MAIL_PASSWORD set: {'yes' if MAIL_PASSWORD else 'NO - EMPTY!'}")
-    print(f"[EMAIL DEBUG] APP_BASE_URL: {APP_BASE_URL}")
+    print(f"[EMAIL DEBUG] Reset link: {reset_link}")
 
-    with smtplib.SMTP(MAIL_HOST, MAIL_PORT) as server:
-        server.set_debuglevel(1)
-        server.starttls()
-        server.login(MAIL_USERNAME, MAIL_PASSWORD)
-        server.sendmail(MAIL_FROM, to_email, msg.as_string())
-    print(f"[EMAIL DEBUG] Email sent successfully to {to_email}")
+    try:
+        with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(MAIL_USERNAME, MAIL_PASSWORD)
+            server.sendmail(MAIL_FROM, to_email, msg.as_string())
+        print(f"[EMAIL DEBUG] Email sent successfully to {to_email}")
+    except smtplib.SMTPAuthenticationError:
+        print("[EMAIL ERROR] Authentication failed - check Gmail app password")
+        raise Exception("Email authentication failed. Please contact the administrator.")
+    except smtplib.SMTPException as e:
+        print(f"[EMAIL ERROR] SMTP error: {e}")
+        raise Exception(f"Email sending failed: {str(e)}")
+    except Exception as e:
+        print(f"[EMAIL ERROR] Unexpected error: {e}")
+        raise
 
 # ============================================================
 # DATABASE HELPERS
