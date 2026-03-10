@@ -270,6 +270,7 @@ def reset_password_page():
 def forgot_password():
     data  = request.get_json()
     email = data.get("email", "").strip().lower()
+    print(f"[RESET] Forgot password request for: {email}")
     if not email:
         return jsonify({"error": "Email is required"}), 400
 
@@ -278,10 +279,12 @@ def forgot_password():
     cursor.execute("SELECT id, fullname, email FROM users WHERE LOWER(email) = %s", (email,))
     user = cursor.fetchone()
 
-    # Always return success to prevent email enumeration
     if not user:
+        print(f"[RESET] No user found for email: {email}")
         cursor.close(); conn.close()
         return jsonify({"message": "If that email exists, a reset link has been sent."})
+
+    print(f"[RESET] User found: {user['fullname']} ({user['email']})")
 
     # Generate secure token, expires in 30 minutes
     token      = secrets.token_urlsafe(48)
@@ -296,8 +299,10 @@ def forgot_password():
     conn.commit()
     cursor.close(); conn.close()
 
+    print(f"[RESET] Token generated, attempting to send email to {user['email']}")
     try:
         send_reset_email(user["email"], token)
+        print(f"[RESET] Email sent successfully to {user['email']}")
     except Exception as e:
         print(f"[EMAIL ERROR] {type(e).__name__}: {e}")
         return jsonify({"error": f"Email failed: {str(e)}"}), 500
