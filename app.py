@@ -34,9 +34,9 @@ def test_email():
 # ============================================================
 MAIL_HOST     = "smtp.gmail.com"
 MAIL_PORT     = 587
-MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
-MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "fdhrpdgpjwgbmkws")
-MAIL_FROM     = os.environ.get("MAIL_USERNAME", "fidelclinton4@gmail.com")
+MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
+MAIL_FROM     = os.environ.get("MAIL_USERNAME")
 APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://grade-tracker-latest.onrender.com")
 
 def send_reset_email(to_email, token):
