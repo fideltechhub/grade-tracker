@@ -37,12 +37,12 @@ def test_email():
 # ============================================================
 # EMAIL CONFIG (Gmail SMTP)
 # ============================================================
-MAIL_HOST     = "smtp.gmail.com"
+MAIL_HOST     = "smtp-relay.brevo.com"
 MAIL_PORT     = 587
-MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
-MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
-MAIL_FROM     = os.environ.get("MAIL_USERNAME")
-APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://grade-tracker-latest.onrender.com")
+MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "a4916f001@smtp-brevo.com")
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "xsmtpsib-b653809d5b7aa8ec3af99abb307e2fc546c4086618812d747c1ddd983b20884d-TrT3JkvemQGaXHMB")
+MAIL_FROM     = os.environ.get("MAIL_FROM", "fidelclinton4@gmail.com")
+APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://grade-tracker-pq0y.onrender.com")
 
 def send_reset_email(to_email, token):
     """Send password reset email via Gmail SMTP."""
