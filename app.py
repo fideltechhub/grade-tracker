@@ -31,7 +31,7 @@ try:
     from webauthn.helpers.structs import (
         AuthenticatorSelectionCriteria, UserVerificationRequirement,
         AuthenticatorAttachment, ResidentKeyRequirement,
-        PublicKeyCredentialDescriptor,
+        PublicKeyCredentialDescriptor, AuthenticatorTransport,
     )
     WEBAUTHN_AVAILABLE = True
 except ImportError:
@@ -281,6 +281,7 @@ def webauthn_register_begin():
     if not u: return jsonify({"error":"Unauthorized"}), 403
     conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT credential_id FROM webauthn_credentials WHERE user_id=%s", (u["id"],))
+    transport_map = {t.value: t for t in AuthenticatorTransport}
     exclude = [PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["credential_id"])) for r in cur.fetchall()]
     cur.close(); conn.close()
     opts = generate_registration_options(
@@ -290,7 +291,7 @@ def webauthn_register_begin():
         authenticator_selection=AuthenticatorSelectionCriteria(
             authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             user_verification=UserVerificationRequirement.REQUIRED,
-            resident_key=ResidentKeyRequirement.DISCOURAGED,  # prevents GPM sync / passkey picker
+            resident_key=ResidentKeyRequirement.REQUIRED,
         ),
     )
     session["wn_reg_challenge"] = base64.b64encode(opts.challenge).decode()
@@ -330,30 +331,10 @@ def webauthn_register_complete():
 @app.route("/api/webauthn/login/begin", methods=["POST"])
 def webauthn_login_begin():
     if not WEBAUTHN_AVAILABLE: return jsonify({"error":"Biometric auth not available"}), 503
-    d = request.get_json(); username = d.get("username","").strip()
-    # Username is REQUIRED — without it allowCredentials stays empty and
-    # Chrome shows the full passkey-picker dialog instead of going
-    # straight to the device biometric prompt.
-    if not username:
-        return jsonify({"error":"Please enter your username first, then tap the biometric button."}), 400
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("SELECT id FROM users WHERE username=%s", (username,))
-    found = cur.fetchone()
-    if not found:
-        cur.close(); conn.close()
-        return jsonify({"error":"Username not found."}), 404
-    cur.execute("SELECT credential_id, transports FROM webauthn_credentials WHERE user_id=%s", (found["id"],))
-    rows = cur.fetchall(); cur.close(); conn.close()
-    if not rows:
-        return jsonify({"error":"No biometric registered for this account. Please register one first from your dashboard."}), 404
-    # Explicit allowCredentials with transports=["internal"] tells Chrome to
-    # skip the passkey picker and go directly to the platform authenticator.
-    allow = [PublicKeyCredentialDescriptor(
-        id=base64url_to_bytes(r["credential_id"]),
-        transports=r["transports"].split(",") if r["transports"] else ["internal"]
-    ) for r in rows]
+    # Discoverable credential flow — no allowCredentials needed.
+    # Browser shows account selector, user picks account, biometric fires.
     opts = generate_authentication_options(
-        rp_id=RP_ID, allow_credentials=allow,
+        rp_id=RP_ID,
         user_verification=UserVerificationRequirement.REQUIRED,
     )
     session["wn_auth_challenge"] = base64.b64encode(opts.challenge).decode()
