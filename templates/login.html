@@ -148,8 +148,13 @@
 
       opts.challenge=b64urlToBuffer(opts.challenge);
       if(opts.allowCredentials)
-        opts.allowCredentials=opts.allowCredentials.map(c=>({...c,id:b64urlToBuffer(c.id)}));
-      opts.hints=['client-device'];
+        opts.allowCredentials=opts.allowCredentials.map(c=>({
+          ...c,
+          id:b64urlToBuffer(c.id),
+          // "internal" tells Chrome this is a platform authenticator (fingerprint/Face ID)
+          // — skips the Google Password Manager picker and goes straight to biometric prompt
+          transports: c.transports && c.transports.length ? c.transports : ['internal'],
+        }));
 
       const cred=await navigator.credentials.get({publicKey:opts});
       const payload={
