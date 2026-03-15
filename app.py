@@ -23,10 +23,6 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = True
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-# Session cookie has no expiry — dies when browser closes
-app.config["SESSION_COOKIE_SECURE"] = True
 
 # ── WebAuthn ────────────────────────────────────────────────
 try:
@@ -38,7 +34,7 @@ try:
     from webauthn.helpers.structs import (
         AuthenticatorSelectionCriteria, UserVerificationRequirement,
         AuthenticatorAttachment, ResidentKeyRequirement,
-        PublicKeyCredentialDescriptor,
+        PublicKeyCredentialDescriptor, AuthenticatorTransport,
     )
     WEBAUTHN_AVAILABLE = True
 except ImportError:
@@ -297,7 +293,7 @@ def webauthn_register_begin():
         authenticator_selection=AuthenticatorSelectionCriteria(
             authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             user_verification=UserVerificationRequirement.REQUIRED,
-            resident_key=ResidentKeyRequirement.PREFERRED,
+            resident_key=ResidentKeyRequirement.DISCOURAGED,
         ),
     )
     session["wn_reg_challenge"] = base64.b64encode(opts.challenge).decode()
@@ -338,18 +334,24 @@ def webauthn_register_complete():
 def webauthn_login_begin():
     if not WEBAUTHN_AVAILABLE: return jsonify({"error":"Biometric auth not available"}), 503
     d = request.get_json(); username = d.get("username","").strip()
-    allow = []
-    if username:
-        conn = get_db(); cur = conn.cursor()
-        cur.execute("SELECT id FROM users WHERE username=%s", (username,))
-        found = cur.fetchone()
-        if found:
-            cur.execute("SELECT credential_id, transports FROM webauthn_credentials WHERE user_id=%s", (found["id"],))
-            allow = [PublicKeyCredentialDescriptor(
-                id=base64url_to_bytes(r["credential_id"]),
-                transports=r["transports"].split(",") if r["transports"] else ["internal"]
-            ) for r in cur.fetchall()]
+    if not username:
+        return jsonify({"error":"Please enter your username first, then tap the biometric button."}), 400
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE username=%s", (username,))
+    found = cur.fetchone()
+    if not found:
         cur.close(); conn.close()
+        return jsonify({"error":"Username not found."}), 404
+    cur.execute("SELECT credential_id, transports FROM webauthn_credentials WHERE user_id=%s", (found["id"],))
+    rows = cur.fetchall(); cur.close(); conn.close()
+    if not rows:
+        return jsonify({"error":"No biometric registered for this account. Please register one from your dashboard."}), 404
+    transport_map = {t.value: t for t in AuthenticatorTransport}
+    allow = [PublicKeyCredentialDescriptor(
+        id=base64url_to_bytes(r["credential_id"]),
+        transports=[transport_map.get(t, AuthenticatorTransport.INTERNAL)
+                    for t in (r["transports"].split(",") if r["transports"] else ["internal"])]
+    ) for r in rows]
     opts = generate_authentication_options(
         rp_id=RP_ID, allow_credentials=allow,
         user_verification=UserVerificationRequirement.REQUIRED,
