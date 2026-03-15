@@ -133,6 +133,10 @@
     hideErr();
     const btn=document.getElementById('bio-btn');
     const username=document.getElementById('username').value.trim();
+    if(!username){
+      showErr('Please enter your username first, then tap the biometric button.');
+      document.getElementById('username').focus(); return;
+    }
     if(!window.isSecureContext||!window.PublicKeyCredential){
       showErr('Biometric login requires HTTPS or localhost.');return;
     }
@@ -149,10 +153,7 @@
       opts.challenge=b64urlToBuffer(opts.challenge);
       if(opts.allowCredentials)
         opts.allowCredentials=opts.allowCredentials.map(c=>({
-          ...c,
-          id:b64urlToBuffer(c.id),
-          // "internal" tells Chrome this is a platform authenticator (fingerprint/Face ID)
-          // — skips the Google Password Manager picker and goes straight to biometric prompt
+          ...c, id:b64urlToBuffer(c.id),
           transports: c.transports && c.transports.length ? c.transports : ['internal'],
         }));
 

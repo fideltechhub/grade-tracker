@@ -281,7 +281,6 @@ def webauthn_register_begin():
     if not u: return jsonify({"error":"Unauthorized"}), 403
     conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT credential_id FROM webauthn_credentials WHERE user_id=%s", (u["id"],))
-    transport_map = {t.value: t for t in AuthenticatorTransport}
     exclude = [PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["credential_id"])) for r in cur.fetchall()]
     cur.close(); conn.close()
     opts = generate_registration_options(
@@ -291,7 +290,7 @@ def webauthn_register_begin():
         authenticator_selection=AuthenticatorSelectionCriteria(
             authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             user_verification=UserVerificationRequirement.REQUIRED,
-            resident_key=ResidentKeyRequirement.REQUIRED,
+            resident_key=ResidentKeyRequirement.DISCOURAGED,
         ),
     )
     session["wn_reg_challenge"] = base64.b64encode(opts.challenge).decode()
@@ -331,10 +330,29 @@ def webauthn_register_complete():
 @app.route("/api/webauthn/login/begin", methods=["POST"])
 def webauthn_login_begin():
     if not WEBAUTHN_AVAILABLE: return jsonify({"error":"Biometric auth not available"}), 503
-    # Discoverable credential flow — no allowCredentials needed.
-    # Browser shows account selector, user picks account, biometric fires.
+    d = request.get_json(); username = d.get("username","").strip()
+    if not username:
+        return jsonify({"error":"Please enter your username first, then tap the biometric button."}), 400
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE username=%s", (username,))
+    found = cur.fetchone()
+    if not found:
+        cur.close(); conn.close()
+        return jsonify({"error":"Username not found."}), 404
+    cur.execute("SELECT credential_id, transports FROM webauthn_credentials WHERE user_id=%s", (found["id"],))
+    rows = cur.fetchall(); cur.close(); conn.close()
+    if not rows:
+        return jsonify({"error":"No biometric registered for this account. Please register one from your dashboard."}), 404
+    # Convert stored transport strings to AuthenticatorTransport enums
+    # to avoid AttributeError in options_to_json
+    transport_map = {t.value: t for t in AuthenticatorTransport}
+    allow = [PublicKeyCredentialDescriptor(
+        id=base64url_to_bytes(r["credential_id"]),
+        transports=[transport_map.get(t, AuthenticatorTransport.INTERNAL)
+                    for t in (r["transports"].split(",") if r["transports"] else ["internal"])]
+    ) for r in rows]
     opts = generate_authentication_options(
-        rp_id=RP_ID,
+        rp_id=RP_ID, allow_credentials=allow,
         user_verification=UserVerificationRequirement.REQUIRED,
     )
     session["wn_auth_challenge"] = base64.b64encode(opts.challenge).decode()
