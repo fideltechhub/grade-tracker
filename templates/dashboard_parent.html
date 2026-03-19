@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GradeVault — Parent Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    .top-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem}
+    .welcome{font-size:1.5rem;font-weight:800;letter-spacing:-0.03em}
+    .welcome span{color:var(--accent)}
+    .role-badge{background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.3);color:var(--accent);border-radius:20px;padding:4px 14px;font-size:0.75rem;font-family:var(--font-mono);font-weight:600}
+    .logout-btn{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 16px;font-family:var(--font-display);font-size:0.82rem;cursor:pointer;transition:all 0.2s}
+    .logout-btn:hover{border-color:var(--red);color:var(--red)}
+    .tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);padding:4px;border-radius:10px;margin-bottom:2rem;width:fit-content;flex-wrap:wrap}
+    .tab{background:none;border:none;color:var(--muted);font-family:var(--font-display);font-size:0.85rem;font-weight:600;padding:6px 18px;border-radius:7px;cursor:pointer;transition:all 0.2s}
+    .tab.active{background:var(--accent);color:#0d0f14}
+    .tab-content{display:none}.tab-content.active{display:block;animation:fadeUp 0.3s ease}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    .theme-btn{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:1rem;transition:all 0.2s}
+    .theme-btn:hover{border-color:var(--accent);color:var(--accent)}
+    .child-selector{display:flex;gap:8px;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap}
+    .child-btn{background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:7px 18px;font-family:var(--font-display);font-size:0.85rem;font-weight:600;cursor:pointer;transition:all 0.2s}
+    .child-btn.active{background:var(--accent);color:#0d0f14;border-color:var(--accent)}
+    .no-data{text-align:center;padding:3rem;color:var(--muted);font-family:var(--font-mono);font-size:0.9rem;background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius)}
+    @media(max-width:600px){.top-bar{flex-direction:column;align-items:flex-start;gap:12px}main{padding:1.2rem 1rem!important}}
+  </style>
+</head>
+<body>
+<main style="max-width:1000px;margin:0 auto;padding:2.5rem 2rem">
+
+  <div class="top-bar">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="color:var(--accent);font-size:1.6rem">◈</span>
+      <div>
+        <div class="welcome">Welcome, <span>{{ user.fullname }}</span></div>
+        <div style="color:var(--muted);font-size:0.8rem;font-family:var(--font-mono)">Parent Dashboard</div>
+      </div>
+      <span class="role-badge">👨‍👩‍👧 Parent</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="theme-btn" id="theme-toggle" title="Toggle dark/light mode">🌙</button>
+      <button class="logout-btn" onclick="logout()">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="grades">Grades</button>
+    <button class="tab" data-tab="attendance">Attendance</button>
+  </div>
+
+  <!-- OVERVIEW TAB -->
+  <div id="tab-overview" class="tab-content active">
+    <div class="page-title"><h1>My Children</h1><p>Academic overview for your linked students</p></div>
+
+    <!-- Announcements banner -->
+    <div id="announcements-banner" style="margin-bottom:1.5rem"></div>
+
+    <div id="no-children" style="display:none" class="no-data">
+      No students linked to your account yet. Please contact the school administrator.
+    </div>
+    <div id="children-overview"></div>
+  </div>
+
+  <!-- GRADES TAB -->
+  <div id="tab-grades" class="tab-content">
+    <div class="page-title"><h1>Grades</h1><p>View your child's grades</p></div>
+    <div class="child-selector" id="grade-child-selector"></div>
+    <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+      <select id="grade-term-filter" onchange="loadChildGrades()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+        <option value="">All Terms</option>
+        <option value="Term 1">Term 1</option>
+        <option value="Term 2">Term 2</option>
+        <option value="Term 3">Term 3</option>
+      </select>
+    </div>
+    <div id="grades-container"><div class="no-data">Select a child above to view grades.</div></div>
+  </div>
+
+  <!-- ATTENDANCE TAB -->
+  <div id="tab-attendance" class="tab-content">
+    <div class="page-title"><h1>Attendance</h1><p>View your child's attendance record</p></div>
+    <div class="child-selector" id="att-child-selector"></div>
+    <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+      <select id="att-term-filter" onchange="loadChildAttendance()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+        <option value="">All Terms</option>
+        <option value="Term 1">Term 1</option>
+        <option value="Term 2">Term 2</option>
+        <option value="Term 3">Term 3</option>
+      </select>
+    </div>
+    <div class="stats-grid" style="margin-bottom:1.5rem">
+      <div class="stat-card green"><span class="stat-label">Attendance Rate</span><span class="stat-value" id="att-pct">—</span></div>
+      <div class="stat-card"><span class="stat-label">Days Present</span><span class="stat-value" id="att-present">—</span></div>
+      <div class="stat-card red"><span class="stat-label">Days Absent</span><span class="stat-value" id="att-absent">—</span></div>
+      <div class="stat-card accent"><span class="stat-label">Days Late</span><span class="stat-value" id="att-late">—</span></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Term</th><th>Status</th></tr></thead>
+        <tbody id="att-tbody"><tr><td colspan="4" class="empty-row">Select a child above.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+<div id="toast" class="toast"></div>
+<script>
+  let children = [];
+  let selectedGradeChild = null;
+  let selectedAttChild   = null;
+
+  // ── Dark/Light mode ──
+  const themeBtn   = document.getElementById("theme-toggle");
+  const savedTheme = localStorage.getItem("gv-theme") || "dark";
+  if (savedTheme === "light") { document.body.classList.add("light"); themeBtn.textContent = "☀️"; }
+  themeBtn.addEventListener("click", () => {
+    document.body.classList.toggle("light");
+    const isLight = document.body.classList.contains("light");
+    themeBtn.textContent = isLight ? "☀️" : "🌙";
+    localStorage.setItem("gv-theme", isLight ? "light" : "dark");
+  });
+
+  // ── Tab switching ──
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(s => s.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+      if (btn.dataset.tab === "overview")   loadOverview();
+      if (btn.dataset.tab === "grades")     initGradesTab();
+      if (btn.dataset.tab === "attendance") initAttendanceTab();
+    });
+  });
+
+  async function api(method, path, body=null) {
+    const opts = { method, headers: {"Content-Type":"application/json"} };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    return res.json();
+  }
+
+  function showToast(msg, type="success") {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.className = "toast " + type + " show";
+    setTimeout(() => { t.className = "toast"; }, 3000);
+  }
+
+  function escHtml(str) {
+    return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function safeStr(val) {
+    return (val === null || val === undefined) ? "—" : String(val);
+  }
+
+  // ── Load children ──
+  async function loadChildren() {
+    children = await api("GET", "/api/parent/children");
+    return children;
+  }
+
+  // ── Overview ──
+  async function loadOverview() {
+    await loadChildren();
+    const noEl  = document.getElementById("no-children");
+    const ovEl  = document.getElementById("children-overview");
+    if (!children.length) { noEl.style.display="block"; ovEl.innerHTML=""; return; }
+    noEl.style.display = "none";
+
+    const cards = await Promise.all(children.map(async c => {
+      const [gData, aData] = await Promise.all([
+        api("GET", `/api/parent/child/${c.id}/grades`),
+        api("GET", `/api/parent/child/${c.id}/attendance`)
+      ]);
+      const avg    = gData.average;
+      const status = gData.status;
+      const attPct = aData.summary.pct;
+      const statusColor = s => (s==="EE"||s==="ME")?"var(--green)":(s==="AE"||s==="BE")?"var(--red)":"var(--muted)";
+      return `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1rem">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.2rem;flex-wrap:wrap">
+            <div style="width:44px;height:44px;border-radius:50%;background:rgba(232,197,71,0.15);border:2px solid rgba(232,197,71,0.3);display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:800;color:var(--accent)">${escHtml(c.name.charAt(0).toUpperCase())}</div>
+            <div>
+              <div style="font-weight:800;font-size:1.1rem">${escHtml(c.name)}</div>
+              <div style="font-size:0.78rem;color:var(--muted);font-family:var(--font-mono)">${escHtml(c.email)}</div>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-card accent"><span class="stat-label">Average</span><span class="stat-value" style="color:${avg!==null?(avg>=50?'var(--green)':'var(--red)'):'inherit'}">${avg!==null?avg+"%":"—"}</span></div>
+            <div class="stat-card"><span class="stat-label">CBC Level</span><span class="stat-value" style="font-size:1.2rem;color:${statusColor(status)}">${escHtml(status)}</span></div>
+            <div class="stat-card green"><span class="stat-label">Attendance</span><span class="stat-value">${aData.summary.total?attPct+"%":"—"}</span></div>
+            <div class="stat-card"><span class="stat-label">Subjects</span><span class="stat-value">${[...new Set((gData.grades||[]).map(g=>g.subject))].length}</span></div>
+          </div>
+        </div>`;
+    }));
+    ovEl.innerHTML = cards.join("");
+  }
+
+  // ── Grades tab ──
+  function buildChildSelector(containerId, selectedId, onSelect) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = children.map(c => `
+      <button class="child-btn ${c.id===selectedId?'active':''}" onclick="${onSelect}(${c.id})">${escHtml(c.name)}</button>`).join("");
+  }
+
+  async function initGradesTab() {
+    await loadChildren();
+    if (!children.length) { document.getElementById("grades-container").innerHTML = '<div class="no-data">No children linked to your account.</div>'; return; }
+    if (!selectedGradeChild) selectedGradeChild = children[0].id;
+    buildChildSelector("grade-child-selector", selectedGradeChild, "selectGradeChild");
+    await loadChildGrades();
+  }
+
+  function selectGradeChild(id) {
+    selectedGradeChild = id;
+    buildChildSelector("grade-child-selector", id, "selectGradeChild");
+    loadChildGrades();
+  }
+
+  async function loadChildGrades() {
+    if (!selectedGradeChild) return;
+    const term = document.getElementById("grade-term-filter").value;
+    const url  = `/api/parent/child/${selectedGradeChild}/grades` + (term ? "?term="+encodeURIComponent(term) : "");
+    const data = await api("GET", url);
+    const container = document.getElementById("grades-container");
+    if (data.error) { container.innerHTML = `<div class="no-data">${escHtml(data.error)}</div>`; return; }
+    if (!data.grades || !data.grades.length) { container.innerHTML = '<div class="no-data">No grades recorded yet.</div>'; return; }
+
+    const bySubject = {};
+    data.grades.forEach(g => {
+      if (!bySubject[g.subject]) bySubject[g.subject] = [];
+      bySubject[g.subject].push(g);
+    });
+
+    container.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.2rem;margin-bottom:1.5rem;display:flex;gap:2rem;flex-wrap:wrap">
+        <div><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">Overall Average</div>
+          <div style="font-size:1.6rem;font-weight:800;color:${data.average>=50?'var(--green)':'var(--red)'}">${data.average!==null?data.average+"%":"—"}</div></div>
+        <div><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:var(--font-mono)">CBC Level</div>
+          <div style="font-size:1.6rem;font-weight:800">${escHtml(data.status)}</div></div>
+      </div>
+      ${Object.entries(bySubject).map(([subject, grades]) => {
+        const avg = Math.round(grades.reduce((s,g) => s+(g.grade/g.max_grade)*100, 0) / grades.length);
+        return `<div class="grade-record-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.2rem;margin-bottom:1rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem">
+            <div style="font-weight:700;font-size:1rem">${escHtml(subject)}</div>
+            <span style="font-family:var(--font-mono);font-weight:700;color:${avg>=50?'var(--green)':'var(--red)'}">${avg}%</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="color:var(--muted);font-size:0.72rem;font-family:var(--font-mono);text-transform:uppercase">
+              <th style="text-align:left;padding:4px 8px">Score</th><th style="text-align:left;padding:4px 8px">Max</th>
+              <th style="text-align:left;padding:4px 8px">%</th><th style="text-align:left;padding:4px 8px">Term</th>
+              <th style="text-align:left;padding:4px 8px">Date</th><th style="text-align:left;padding:4px 8px">Comment</th>
+            </tr></thead>
+            <tbody>
+              ${grades.map(g => { const pct=Math.round((g.grade/g.max_grade)*100); return `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:6px 8px;font-family:var(--font-mono);font-weight:700">${g.grade}</td>
+                <td style="padding:6px 8px;font-family:var(--font-mono)">${g.max_grade}</td>
+                <td style="padding:6px 8px;font-family:var(--font-mono);color:${pct>=50?'var(--green)':'var(--red)'}">${pct}%</td>
+                <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.78rem;color:var(--muted)">${escHtml(g.term||'Term 1')}</td>
+                <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">${escHtml(g.date_added||'—')}</td>
+                <td style="padding:6px 8px;font-size:0.82rem;color:var(--muted);font-style:italic">${g.comment?'💬 '+escHtml(g.comment):'<span style="color:var(--border)">—</span>'}</td>
+              </tr>`; }).join("")}
+            </tbody>
+          </table>
+        </div>`;
+      }).join("")}`;
+  }
+
+  // ── Attendance tab ──
+  async function initAttendanceTab() {
+    await loadChildren();
+    if (!children.length) { document.getElementById("att-tbody").innerHTML = '<tr><td colspan="4" class="empty-row">No children linked.</td></tr>'; return; }
+    if (!selectedAttChild) selectedAttChild = children[0].id;
+    buildChildSelector("att-child-selector", selectedAttChild, "selectAttChild");
+    await loadChildAttendance();
+  }
+
+  function selectAttChild(id) {
+    selectedAttChild = id;
+    buildChildSelector("att-child-selector", id, "selectAttChild");
+    loadChildAttendance();
+  }
+
+  async function loadChildAttendance() {
+    if (!selectedAttChild) return;
+    const term = document.getElementById("att-term-filter").value;
+    const url  = `/api/parent/child/${selectedAttChild}/attendance` + (term ? "?term="+encodeURIComponent(term) : "");
+    const data = await api("GET", url);
+    if (data.error) { document.getElementById("att-tbody").innerHTML = `<tr><td colspan="4" class="empty-row">${escHtml(data.error)}</td></tr>`; return; }
+
+    const s = data.summary;
+    document.getElementById("att-pct").textContent     = s.total ? s.pct + "%" : "—";
+    document.getElementById("att-present").textContent = s.present;
+    document.getElementById("att-absent").textContent  = s.absent;
+    document.getElementById("att-late").textContent    = s.late;
+
+    const tbody = document.getElementById("att-tbody");
+    if (!data.records.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty-row">No attendance records yet.</td></tr>'; return; }
+    const statusColor = st => st==="Present"?"var(--green)":st==="Absent"?"var(--red)":"var(--accent)";
+    tbody.innerHTML = data.records.map((r,i) => `
+      <tr>
+        <td style="color:var(--muted);font-family:var(--font-mono)">${i+1}</td>
+        <td style="font-family:var(--font-mono)">${escHtml(r.date)}</td>
+        <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">${escHtml(r.term)}</td>
+        <td><span style="font-weight:700;color:${statusColor(r.status)}">${escHtml(r.status)}</span></td>
+      </tr>`).join("");
+  }
+
+  // ── Announcements ──
+  async function loadAnnouncements() {
+    const banner = document.getElementById("announcements-banner");
+    if (!banner) return;
+    try {
+      const items = await api("GET", "/api/announcements");
+      if (!items.length) { banner.innerHTML = ""; return; }
+      banner.innerHTML = items.map(a => `
+        <div style="background:rgba(232,197,71,0.08);border:1px solid rgba(232,197,71,0.25);border-radius:var(--radius);padding:1rem 1.2rem;margin-bottom:0.6rem">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <span style="font-size:0.9rem">📢</span>
+            <span style="font-weight:700;font-size:0.95rem">${escHtml(a.title)}</span>
+            <span style="font-size:0.72rem;color:var(--muted);font-family:var(--font-mono);margin-left:auto">${escHtml(a.created_at)}</span>
+          </div>
+          ${a.message ? `<div style="font-size:0.85rem;color:var(--muted);padding-left:26px">${escHtml(a.message)}</div>` : ""}
+        </div>`).join("");
+    } catch(e) { banner.innerHTML = ""; }
+  }
+
+  async function logout() { await api("POST", "/api/logout"); window.location.href = "/login"; }
+
+  loadOverview();
+  loadAnnouncements();
+
+  // ── Auto logout when tab closed / 30min hidden ──
+  window.addEventListener('pagehide', function(e) {
+    if (!e.persisted) navigator.sendBeacon('/api/logout', new Blob([JSON.stringify({})], {type:'application/json'}));
+  });
+  let hiddenSince = null;
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') { hiddenSince = Date.now(); }
+    else if (hiddenSince && (Date.now()-hiddenSince)/60000 >= 30) {
+      fetch('/api/logout',{method:'POST'}).finally(()=>window.location.href='/login');
+      hiddenSince = null;
+    } else { hiddenSince = null; }
+  });
+</script>
+</body>
+</html>

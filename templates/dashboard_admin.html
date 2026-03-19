@@ -73,6 +73,7 @@
     <button class="tab" data-tab="password">Change Password</button>
     <button class="tab" data-tab="notices">Notices</button>
     <button class="tab" data-tab="activitylog">Activity Log</button>
+    <button class="tab" data-tab="parents">Parents</button>
     <button class="tab" data-tab="biometrics">🔑 Biometrics</button>
   </div>
 
@@ -88,6 +89,7 @@
       <div class="stat-card accent"><span class="stat-label">Total Teachers</span><span class="stat-value" id="val-teachers">—</span></div>
       <div class="stat-card green"><span class="stat-label">Total Grades</span><span class="stat-value" id="val-grades">—</span></div>
       <div class="stat-card"><span class="stat-label">School Average</span><span class="stat-value" id="val-avg">—</span></div>
+      <div class="stat-card green"><span class="stat-label">Attendance Rate</span><span class="stat-value" id="val-attendance">—</span></div>
     </div>
   </div>
 
@@ -270,6 +272,35 @@
     </div>
   </div>
 
+  <!-- PARENTS TAB -->
+  <div id="tab-parents" class="tab-content">
+    <div class="page-title"><h1>Parents</h1><p>Manage parent accounts and link them to students</p></div>
+
+    <div class="form-card" style="max-width:600px;margin-bottom:1.5rem">
+      <h2>Add Parent Account</h2>
+      <div class="form-row" style="margin-bottom:1rem">
+        <div class="form-group"><label>Full Name</label><input type="text" id="par-name" placeholder="e.g. Mrs. Wanjiku" maxlength="32"/></div>
+        <div class="form-group"><label>Username</label><input type="text" id="par-username" placeholder="e.g. wanjiku" maxlength="32"/></div>
+      </div>
+      <div class="form-row" style="margin-bottom:1rem">
+        <div class="form-group"><label>Email</label><input type="email" id="par-email" placeholder="wanjiku@gmail.com"/></div>
+        <div class="form-group"><label>Password</label>
+          <div class="password-wrap">
+            <input type="password" id="par-password" placeholder="Set a password"/>
+            <button type="button" class="eye-btn" onclick="togglePassword('par-password',this)">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <button class="btn-primary" onclick="addParent()">Add Parent</button>
+      <div id="parent-msg" class="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="section-heading"><h2>All Parents</h2></div>
+    <div id="parents-list"><div class="empty-state">Loading...</div></div>
+  </div>
+
   <!-- BIOMETRICS TAB -->
   <div id="tab-biometrics" class="tab-content">
     <div class="page-title"><h1>Biometric Login</h1><p>Register your fingerprint or Face ID for passwordless sign-in</p></div>
@@ -341,6 +372,7 @@
       if (btn.dataset.tab === "report")      loadSchoolReport();
       if (btn.dataset.tab === "notices")     loadNotices();
       if (btn.dataset.tab === "activitylog") loadActivityLog();
+      if (btn.dataset.tab === "parents")     loadParents();
       if (btn.dataset.tab === "biometrics")  loadBiometrics();
     });
   });
@@ -369,11 +401,15 @@
 
   // ── Overview ──
   async function loadOverview() {
-    const stats = await api("GET", "/api/admin/stats");
-    document.getElementById("val-students").textContent = stats.total_students || 0;
-    document.getElementById("val-teachers").textContent = stats.total_teachers || 0;
-    document.getElementById("val-grades").textContent   = stats.total_grades   || 0;
-    document.getElementById("val-avg").textContent      = stats.overall_average ? stats.overall_average + "%" : "—";
+    const [stats, att] = await Promise.all([
+      api("GET", "/api/admin/stats"),
+      api("GET", "/api/admin/attendance-stats")
+    ]);
+    document.getElementById("val-students").textContent   = stats.total_students || 0;
+    document.getElementById("val-teachers").textContent   = stats.total_teachers || 0;
+    document.getElementById("val-grades").textContent     = stats.total_grades   || 0;
+    document.getElementById("val-avg").textContent        = stats.overall_average ? stats.overall_average + "%" : "—";
+    document.getElementById("val-attendance").textContent = att.total ? att.pct + "%" : "—";
   }
 
   // ── Teachers ──
@@ -839,6 +875,77 @@
         </div>
         <button class="btn-danger" onclick="deleteNotice(${a.id})">Delete</button>
       </div>`).join("");
+  }
+
+  // ── Parents ──
+  let allStudentsList = [];
+
+  async function loadParents() {
+    const list = document.getElementById("parents-list");
+    list.innerHTML = '<div class="empty-state">Loading...</div>';
+    const [parents, students] = await Promise.all([
+      api("GET", "/api/admin/parents"),
+      api("GET", "/api/students")
+    ]);
+    allStudentsList = students;
+    if (!parents.length) { list.innerHTML = '<div class="empty-state">No parents yet.</div>'; return; }
+    list.innerHTML = parents.map(p => `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.2rem 1.4rem;margin-bottom:0.8rem">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+          <div>
+            <div style="font-weight:700;font-size:1rem">${escHtml(p.fullname)}</div>
+            <div style="font-family:var(--font-mono);font-size:0.78rem;color:var(--muted)">${escHtml(p.username)} · ${escHtml(p.email)}</div>
+            <div style="margin-top:0.6rem;font-size:0.82rem;color:var(--muted)">
+              ${p.children.length ? '<strong>Linked children:</strong> ' + p.children.map(c=>`<span style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.2);border-radius:6px;padding:2px 8px;font-family:var(--font-mono);font-size:0.75rem;margin-right:4px">${escHtml(c.name)} <button onclick="unlinkChild(${p.id},${c.id})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.75rem;padding:0 2px">×</button></span>`).join('') : '<em>No children linked yet.</em>'}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+            <select id="link-student-${p.id}" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text);font-family:var(--font-display);font-size:0.82rem;outline:none">
+              <option value="">Link a student...</option>
+              ${students.filter(s=>!p.children.find(c=>c.id===s.id)).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('')}
+            </select>
+            <button class="btn-primary" style="padding:6px 14px;font-size:0.82rem" onclick="linkChild(${p.id})">Link</button>
+            <button class="btn-danger" onclick="deleteParent(${p.id})">Delete</button>
+          </div>
+        </div>
+      </div>`).join("");
+  }
+
+  async function addParent() {
+    const msg = document.getElementById("parent-msg");
+    const fullname  = document.getElementById("par-name").value.trim();
+    const username  = document.getElementById("par-username").value.trim();
+    const email     = document.getElementById("par-email").value.trim();
+    const password  = document.getElementById("par-password").value;
+    if (!fullname||!username||!email||!password) { msg.textContent="All fields are required."; msg.className="msg error"; return; }
+    const res = await api("POST", "/api/admin/parents", {fullname, username, email, password});
+    if (res.error) { msg.textContent=res.error; msg.className="msg error"; }
+    else {
+      msg.textContent="✓ Parent added!"; msg.className="msg success";
+      showToast("Parent added!"); loadParents();
+      ["par-name","par-username","par-email","par-password"].forEach(id => document.getElementById(id).value="");
+    }
+  }
+
+  async function deleteParent(id) {
+    if (!confirm("Delete this parent account?")) return;
+    await api("DELETE", "/api/admin/parents/"+id);
+    showToast("Parent deleted","error"); loadParents();
+  }
+
+  async function linkChild(parentId) {
+    const sel = document.getElementById("link-student-"+parentId);
+    const studentId = sel.value;
+    if (!studentId) { showToast("Select a student first","error"); return; }
+    const res = await api("POST", "/api/admin/parents/"+parentId+"/link", {student_id: parseInt(studentId)});
+    if (res.error) showToast(res.error,"error");
+    else { showToast("Student linked!"); loadParents(); }
+  }
+
+  async function unlinkChild(parentId, studentId) {
+    if (!confirm("Unlink this student from the parent?")) return;
+    await api("DELETE", "/api/admin/parents/"+parentId+"/unlink/"+studentId);
+    showToast("Unlinked"); loadParents();
   }
 
   // ── Activity Log ──

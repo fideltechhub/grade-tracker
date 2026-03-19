@@ -208,6 +208,31 @@ def init_db():
         )
     """)
 
+    # Attendance table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance (
+            id SERIAL PRIMARY KEY,
+            student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+            date DATE NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Present',
+            term TEXT DEFAULT 'Term 1',
+            marked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(student_id, date)
+        )
+    """)
+
+    # Parent-student link table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS parent_students (
+            id SERIAL PRIMARY KEY,
+            parent_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(parent_id, student_id)
+        )
+    """)
+
     conn.commit()
 
     # Create default admin if none exists
@@ -313,7 +338,9 @@ def cbc_status(average):
 def home():
     user = get_current_user()
     if user:
-        return redirect(url_for(user["role"] + "_dashboard"))
+        role_map = {"admin": "admin_dashboard", "teacher": "teacher_dashboard",
+                    "student": "student_dashboard", "parent": "parent_dashboard"}
+        return redirect(url_for(role_map.get(user["role"], "login_page")))
     return redirect(url_for("login_page"))
 
 
@@ -450,6 +477,14 @@ def student_dashboard():
     return render_template("dashboard_student.html", user=dict(user))
 
 
+@app.route("/dashboard/parent")
+def parent_dashboard():
+    user = get_current_user()
+    if not user or user["role"] != "parent":
+        return redirect(url_for("login_page"))
+    return render_template("dashboard_parent.html", user=dict(user))
+
+
 # ============================================================
 # AUTH API ENDPOINTS
 # ============================================================
@@ -482,7 +517,8 @@ def api_login():
     redirects = {
         "admin":   "/dashboard/admin",
         "teacher": "/dashboard/teacher",
-        "student": "/dashboard/student"
+        "student": "/dashboard/student",
+        "parent":  "/dashboard/parent"
     }
 
     return jsonify({
@@ -1361,6 +1397,385 @@ def delete_announcement(ann_id):
     cursor.close()
     conn.close()
     return jsonify({"ok": True})
+
+
+# ============================================================
+# ATTENDANCE
+# ============================================================
+
+@app.route("/api/attendance", methods=["POST"])
+def mark_attendance():
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data    = request.get_json()
+    records = data.get("records", [])   # [{student_id, status}]
+    date    = data.get("date", "").strip()
+    term    = data.get("term", "Term 1").strip() or "Term 1"
+
+    if not date or not records:
+        return jsonify({"error": "date and records are required"}), 400
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    saved  = 0
+    for r in records:
+        sid    = r.get("student_id")
+        status = r.get("status", "Present")
+        if not sid or status not in ("Present", "Absent", "Late"):
+            continue
+        cursor.execute("""
+            INSERT INTO attendance (student_id, date, status, term, marked_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (student_id, date)
+            DO UPDATE SET status = EXCLUDED.status, term = EXCLUDED.term, marked_by = EXCLUDED.marked_by
+        """, (sid, date, status, term, user["id"]))
+        saved += 1
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    log_activity(user, "Marked attendance", f"{saved} records for {date} ({term})")
+    return jsonify({"saved": saved, "message": f"Attendance saved for {date}"})
+
+
+@app.route("/api/attendance", methods=["GET"])
+def get_attendance():
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    date_filter    = request.args.get("date", "").strip()
+    student_filter = request.args.get("student_id", "").strip()
+    term_filter    = request.args.get("term", "").strip()
+
+    conn   = get_db()
+    cursor = conn.cursor()
+
+    conds  = []
+    params = []
+    if date_filter:
+        conds.append("a.date = %s"); params.append(date_filter)
+    if student_filter:
+        conds.append("a.student_id = %s"); params.append(student_filter)
+    if term_filter:
+        conds.append("a.term = %s"); params.append(term_filter)
+
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    cursor.execute(f"""
+        SELECT a.*, s.name as student_name, s.email as student_email
+        FROM attendance a
+        JOIN students s ON a.student_id = s.id
+        {where}
+        ORDER BY a.date DESC, s.name ASC
+    """, params)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return jsonify([{
+        "id":            r["id"],
+        "student_id":    r["student_id"],
+        "student_name":  r["student_name"],
+        "student_email": r["student_email"],
+        "date":          str(r["date"]),
+        "status":        r["status"],
+        "term":          r["term"] or "Term 1"
+    } for r in rows])
+
+
+@app.route("/api/my-attendance", methods=["GET"])
+def my_attendance():
+    user = get_current_user()
+    if not user or user["role"] != "student":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM students WHERE email = %s", (user["email"],))
+    student = cursor.fetchone()
+    if not student:
+        cursor.close(); conn.close()
+        return jsonify({"records": [], "summary": {"total": 0, "present": 0, "absent": 0, "late": 0, "pct": 0}})
+
+    term_filter = request.args.get("term", "").strip()
+    if term_filter:
+        cursor.execute("SELECT * FROM attendance WHERE student_id = %s AND term = %s ORDER BY date DESC", (student["id"], term_filter))
+    else:
+        cursor.execute("SELECT * FROM attendance WHERE student_id = %s ORDER BY date DESC", (student["id"],))
+
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total   = len(rows)
+    present = sum(1 for r in rows if r["status"] == "Present")
+    absent  = sum(1 for r in rows if r["status"] == "Absent")
+    late    = sum(1 for r in rows if r["status"] == "Late")
+    pct     = round((present / total) * 100, 1) if total else 0
+
+    return jsonify({
+        "records": [{"date": str(r["date"]), "status": r["status"], "term": r["term"] or "Term 1"} for r in rows],
+        "summary": {"total": total, "present": present, "absent": absent, "late": late, "pct": pct}
+    })
+
+
+@app.route("/api/admin/attendance-stats", methods=["GET"])
+def attendance_stats():
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as c FROM attendance")
+    total = cursor.fetchone()["c"]
+    cursor.execute("SELECT COUNT(*) as c FROM attendance WHERE status='Present'")
+    present = cursor.fetchone()["c"]
+    cursor.execute("SELECT COUNT(*) as c FROM attendance WHERE status='Absent'")
+    absent = cursor.fetchone()["c"]
+    cursor.execute("SELECT COUNT(*) as c FROM attendance WHERE status='Late'")
+    late = cursor.fetchone()["c"]
+    cursor.close()
+    conn.close()
+
+    pct = round((present / total) * 100, 1) if total else 0
+    return jsonify({"total": total, "present": present, "absent": absent, "late": late, "pct": pct})
+
+
+# ============================================================
+# PARENT PORTAL
+# ============================================================
+
+@app.route("/api/admin/parents", methods=["GET"])
+def get_parents():
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, fullname, username, email, created_at FROM users WHERE role='parent' ORDER BY fullname")
+    parents = cursor.fetchall()
+
+    result = []
+    for p in parents:
+        cursor.execute("""
+            SELECT s.id, s.name, s.email FROM parent_students ps
+            JOIN students s ON ps.student_id = s.id
+            WHERE ps.parent_id = %s
+        """, (p["id"],))
+        children = cursor.fetchall()
+        d = dict(p)
+        d["children"]    = [dict(c) for c in children]
+        d["created_at"]  = p["created_at"].strftime("%d %b %Y") if p["created_at"] else "—"
+        result.append(d)
+
+    cursor.close()
+    conn.close()
+    return jsonify(result)
+
+
+@app.route("/api/admin/parents", methods=["POST"])
+def add_parent():
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data     = request.get_json()
+    fullname = data.get("fullname", "").strip()
+    username = data.get("username", "").strip()
+    email    = data.get("email", "").strip()
+    password = data.get("password", "")
+
+    if not fullname or not username or not email or not password:
+        return jsonify({"error": "All fields are required"}), 400
+
+    email_regex = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+    if not re.match(email_regex, email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    try:
+        conn   = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO users (fullname, username, email, password, role)
+            VALUES (%s, %s, %s, %s, 'parent')
+        """, (fullname, username, email, generate_password_hash(password)))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        log_activity(user, "Added parent", f"{fullname} ({username})")
+        return jsonify({"message": "Parent added"}), 201
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        return jsonify({"error": "Username or email already exists"}), 409
+
+
+@app.route("/api/admin/parents/<int:parent_id>", methods=["DELETE"])
+def delete_parent(parent_id):
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM users WHERE id = %s AND role = 'parent'", (parent_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    log_activity(user, "Deleted parent", f"Parent #{parent_id}")
+    return jsonify({"message": "Parent deleted"})
+
+
+@app.route("/api/admin/parents/<int:parent_id>/link", methods=["POST"])
+def link_parent_student(parent_id):
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data       = request.get_json()
+    student_id = data.get("student_id")
+    if not student_id:
+        return jsonify({"error": "student_id required"}), 400
+
+    try:
+        conn   = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO parent_students (parent_id, student_id) VALUES (%s, %s)",
+            (parent_id, student_id)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"message": "Linked"})
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        return jsonify({"error": "Already linked"}), 409
+
+
+@app.route("/api/admin/parents/<int:parent_id>/unlink/<int:student_id>", methods=["DELETE"])
+def unlink_parent_student(parent_id, student_id):
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM parent_students WHERE parent_id = %s AND student_id = %s",
+        (parent_id, student_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"message": "Unlinked"})
+
+
+@app.route("/api/parent/children", methods=["GET"])
+def get_children():
+    user = get_current_user()
+    if not user or user["role"] != "parent":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.id, s.name, s.email FROM parent_students ps
+        JOIN students s ON ps.student_id = s.id
+        WHERE ps.parent_id = %s
+    """, (user["id"],))
+    children = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify([dict(c) for c in children])
+
+
+@app.route("/api/parent/child/<int:student_id>/grades", methods=["GET"])
+def parent_child_grades(student_id):
+    user = get_current_user()
+    if not user or user["role"] != "parent":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    # Verify parent is linked to this student
+    cursor.execute(
+        "SELECT id FROM parent_students WHERE parent_id = %s AND student_id = %s",
+        (user["id"], student_id)
+    )
+    if not cursor.fetchone():
+        cursor.close(); conn.close()
+        return jsonify({"error": "Not authorized for this student"}), 403
+
+    cursor.execute("SELECT * FROM students WHERE id = %s", (student_id,))
+    student = cursor.fetchone()
+
+    term_filter = request.args.get("term", "").strip()
+    if term_filter:
+        cursor.execute("SELECT * FROM grades WHERE student_id = %s AND term = %s ORDER BY created_at DESC", (student_id, term_filter))
+    else:
+        cursor.execute("SELECT * FROM grades WHERE student_id = %s ORDER BY created_at DESC", (student_id,))
+    grade_list = [dict(g) for g in cursor.fetchall()]
+
+    for g in grade_list:
+        if g.get("created_at"):
+            g["date_added"] = g["created_at"].strftime("%d/%m/%Y")
+        else:
+            g["date_added"] = "—"
+
+    avg    = round(sum(g["grade"] for g in grade_list) / len(grade_list), 2) if grade_list else None
+    status = cbc_status(avg)
+    cursor.close()
+    conn.close()
+
+    return jsonify({
+        "student": dict(student),
+        "grades":  grade_list,
+        "average": avg,
+        "status":  status
+    })
+
+
+@app.route("/api/parent/child/<int:student_id>/attendance", methods=["GET"])
+def parent_child_attendance(student_id):
+    user = get_current_user()
+    if not user or user["role"] != "parent":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id FROM parent_students WHERE parent_id = %s AND student_id = %s",
+        (user["id"], student_id)
+    )
+    if not cursor.fetchone():
+        cursor.close(); conn.close()
+        return jsonify({"error": "Not authorized for this student"}), 403
+
+    term_filter = request.args.get("term", "").strip()
+    if term_filter:
+        cursor.execute("SELECT * FROM attendance WHERE student_id = %s AND term = %s ORDER BY date DESC", (student_id, term_filter))
+    else:
+        cursor.execute("SELECT * FROM attendance WHERE student_id = %s ORDER BY date DESC", (student_id,))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total   = len(rows)
+    present = sum(1 for r in rows if r["status"] == "Present")
+    absent  = sum(1 for r in rows if r["status"] == "Absent")
+    late    = sum(1 for r in rows if r["status"] == "Late")
+    pct     = round((present / total) * 100, 1) if total else 0
+
+    return jsonify({
+        "records": [{"date": str(r["date"]), "status": r["status"], "term": r["term"] or "Term 1"} for r in rows],
+        "summary": {"total": total, "present": present, "absent": absent, "late": late, "pct": pct}
+    })
 
 
 # ============================================================

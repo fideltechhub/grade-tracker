@@ -84,6 +84,7 @@
     <button class="tab" data-tab="students">Students</button>
     <button class="tab" data-tab="grades">Add Grade</button>
     <button class="tab" data-tab="gradebook">Gradebook</button>
+    <button class="tab" data-tab="attendance">Attendance</button>
     <button class="tab" data-tab="charts">Charts</button>
     <button class="tab" data-tab="password">Change Password</button>
     <button class="tab" data-tab="biometrics">🔑 Biometrics</button>
@@ -241,6 +242,52 @@
     </div>
   </div>
 
+  <!-- ATTENDANCE TAB -->
+  <div id="tab-attendance" class="tab-content">
+    <div class="page-title"><h1>Attendance</h1><p>Mark and view student attendance</p></div>
+
+    <div class="form-card wide" style="margin-bottom:1.5rem">
+      <h2>Mark Attendance</h2>
+      <div class="form-row" style="margin-bottom:1rem;gap:1rem">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="att-date" onchange="loadAttendanceStudents()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--font-display);font-size:0.9rem;outline:none;width:100%"/>
+        </div>
+        <div class="form-group">
+          <label>Term</label>
+          <select id="att-term" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:var(--font-display);font-size:0.9rem;outline:none;width:100%">
+            <option value="Term 1">Term 1</option>
+            <option value="Term 2">Term 2</option>
+            <option value="Term 3">Term 3</option>
+          </select>
+        </div>
+      </div>
+      <div id="att-student-list" style="margin-bottom:1rem">
+        <div class="empty-state">Loading students...</div>
+      </div>
+      <button class="btn-primary" onclick="saveAttendance()">Save Attendance</button>
+      <div id="att-msg" class="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="section-heading"><h2>Attendance History</h2></div>
+    <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+      <input type="date" id="att-filter-date" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none" onchange="loadAttendanceHistory()"/>
+      <select id="att-filter-term" onchange="loadAttendanceHistory()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+        <option value="">All Terms</option>
+        <option value="Term 1">Term 1</option>
+        <option value="Term 2">Term 2</option>
+        <option value="Term 3">Term 3</option>
+      </select>
+      <button class="btn-pdf" onclick="loadAttendanceHistory()">↺ Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Student</th><th>Date</th><th>Term</th><th>Status</th></tr></thead>
+        <tbody id="att-history-tbody"><tr><td colspan="5" class="empty-row">Select a date or term to view history.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- GRADEBOOK TAB -->
   <div id="tab-gradebook" class="tab-content">
     <div class="page-title"><h1>Gradebook</h1><p>All students and grades at a glance</p></div>
@@ -358,12 +405,13 @@
       document.querySelectorAll(".tab-content").forEach(s => s.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-      if (btn.dataset.tab === "overview")   loadOverview();
-      if (btn.dataset.tab === "biometrics") loadBiometrics();
-      if (btn.dataset.tab === "students")   loadStudentsTab();
-      if (btn.dataset.tab === "grades")     loadGradesTab();
-      if (btn.dataset.tab === "charts")     loadCharts();
-      if (btn.dataset.tab === "gradebook")  loadGradebook();
+      if (btn.dataset.tab === "overview")    loadOverview();
+      if (btn.dataset.tab === "biometrics")  loadBiometrics();
+      if (btn.dataset.tab === "students")    loadStudentsTab();
+      if (btn.dataset.tab === "grades")      loadGradesTab();
+      if (btn.dataset.tab === "charts")      loadCharts();
+      if (btn.dataset.tab === "gradebook")   loadGradebook();
+      if (btn.dataset.tab === "attendance")  loadAttendanceTab();
     });
   });
 
@@ -790,6 +838,82 @@
       <div style="margin-top:0.8rem;font-size:0.75rem;color:var(--muted);font-family:var(--font-mono)">
         EE ≥75% &nbsp;·&nbsp; ME ≥50% &nbsp;·&nbsp; AE ≥25% &nbsp;·&nbsp; BE &lt;25%
       </div>`;
+  }
+
+  // ── Attendance ──
+  async function loadAttendanceTab() {
+    // Default today's date
+    const dateInput = document.getElementById("att-date");
+    if (!dateInput.value) dateInput.value = new Date().toISOString().split("T")[0];
+    await loadAttendanceStudents();
+  }
+
+  async function loadAttendanceStudents() {
+    const students = await api("GET", "/api/students");
+    const date     = document.getElementById("att-date").value;
+    // Try to load existing attendance for this date
+    let existing = {};
+    if (date) {
+      const records = await api("GET", "/api/attendance?date=" + date);
+      records.forEach(r => { existing[r.student_id] = r.status; });
+    }
+    const list = document.getElementById("att-student-list");
+    if (!students.length) { list.innerHTML = '<div class="empty-state">No students yet.</div>'; return; }
+    list.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
+        <button class="btn-primary" style="padding:4px 12px;font-size:0.78rem" onclick="markAllStatus('Present')">All Present</button>
+        <button class="btn-danger" style="padding:4px 12px;font-size:0.78rem" onclick="markAllStatus('Absent')">All Absent</button>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        ${students.map((s, i) => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;${i>0?'border-top:1px solid var(--border)':''}">
+            <div style="font-weight:600">${escHtml(s.name)} <span style="font-size:0.75rem;color:var(--muted);font-family:var(--font-mono)">${escHtml(s.email)}</span></div>
+            <select data-sid="${s.id}" class="att-status-sel" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+              <option value="Present" ${(existing[s.id]||'Present')==='Present'?'selected':''}>Present</option>
+              <option value="Absent"  ${existing[s.id]==='Absent'?'selected':''}>Absent</option>
+              <option value="Late"    ${existing[s.id]==='Late'?'selected':''}>Late</option>
+            </select>
+          </div>`).join("")}
+      </div>`;
+  }
+
+  function markAllStatus(status) {
+    document.querySelectorAll(".att-status-sel").forEach(sel => sel.value = status);
+  }
+
+  async function saveAttendance() {
+    const date = document.getElementById("att-date").value;
+    const term = document.getElementById("att-term").value;
+    const msg  = document.getElementById("att-msg");
+    if (!date) { msg.textContent = "Please select a date."; msg.className = "msg error"; return; }
+    const records = [...document.querySelectorAll(".att-status-sel")].map(sel => ({
+      student_id: parseInt(sel.dataset.sid), status: sel.value
+    }));
+    if (!records.length) { msg.textContent = "No students to mark."; msg.className = "msg error"; return; }
+    const res = await api("POST", "/api/attendance", { date, term, records });
+    if (res.error) { msg.textContent = res.error; msg.className = "msg error"; }
+    else { msg.textContent = "✓ " + res.message; msg.className = "msg success"; showToast("Attendance saved!"); }
+  }
+
+  async function loadAttendanceHistory() {
+    const date = document.getElementById("att-filter-date").value;
+    const term = document.getElementById("att-filter-term").value;
+    const tbody = document.getElementById("att-history-tbody");
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">Loading...</td></tr>';
+    let url = "/api/attendance?";
+    if (date) url += "date=" + date + "&";
+    if (term) url += "term=" + encodeURIComponent(term) + "&";
+    const records = await api("GET", url);
+    if (!records.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No records found.</td></tr>'; return; }
+    const statusColor = s => s==="Present"?"var(--green)":s==="Absent"?"var(--red)":"var(--accent)";
+    tbody.innerHTML = records.map((r,i) => `
+      <tr>
+        <td style="color:var(--muted);font-family:var(--font-mono)">${i+1}</td>
+        <td style="font-weight:600">${escHtml(r.student_name)}</td>
+        <td style="font-family:var(--font-mono)">${escHtml(r.date)}</td>
+        <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">${escHtml(r.term)}</td>
+        <td><span style="font-weight:700;color:${statusColor(r.status)}">${escHtml(r.status)}</span></td>
+      </tr>`).join("");
   }
 
   // ── Bulk CSV Import ──

@@ -71,6 +71,7 @@
   <!-- Tabs -->
   <div class="tabs">
     <button class="tab active" data-tab="grades">My Grades</button>
+    <button class="tab" data-tab="attendance">Attendance</button>
     <button class="tab" data-tab="charts">Charts</button>
     <button class="tab" data-tab="report">Report Card</button>
     <button class="tab" data-tab="password">Change Password</button>
@@ -102,6 +103,31 @@
     </div>
   </div>
 
+  <!-- ATTENDANCE TAB -->
+  <div id="tab-attendance" class="tab-content">
+    <div class="page-title"><h1>My Attendance</h1><p>Your attendance record</p></div>
+    <div style="display:flex;gap:10px;margin-bottom:1.2rem;flex-wrap:wrap;align-items:center">
+      <select id="att-term-filter" onchange="loadMyAttendance()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+        <option value="">All Terms</option>
+        <option value="Term 1">Term 1</option>
+        <option value="Term 2">Term 2</option>
+        <option value="Term 3">Term 3</option>
+      </select>
+    </div>
+    <div class="stats-grid" style="margin-bottom:1.5rem">
+      <div class="stat-card green"><span class="stat-label">Attendance Rate</span><span class="stat-value" id="att-pct">—</span></div>
+      <div class="stat-card"><span class="stat-label">Days Present</span><span class="stat-value" id="att-present">—</span></div>
+      <div class="stat-card red"><span class="stat-label">Days Absent</span><span class="stat-value" id="att-absent">—</span></div>
+      <div class="stat-card accent"><span class="stat-label">Days Late</span><span class="stat-value" id="att-late">—</span></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Term</th><th>Status</th></tr></thead>
+        <tbody id="att-tbody"><tr><td colspan="4" class="empty-row">Loading attendance...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- CHARTS TAB -->
   <div id="tab-charts" class="tab-content">
     <div class="page-title"><h1>My Performance</h1><p>Visual breakdown of your grades</p></div>
@@ -121,6 +147,10 @@
     <div class="chart-wrap">
       <h3>Grade History (Timeline)</h3>
       <div class="chart-container" style="height:280px"><canvas id="chart-timeline"></canvas></div>
+    </div>
+    <div class="chart-wrap" style="margin-top:1.5rem">
+      <h3>Progress by Term</h3>
+      <div class="chart-container" style="height:260px"><canvas id="chart-progress"></canvas></div>
     </div>
   </div>
 
@@ -211,7 +241,7 @@
 <div id="toast" class="toast"></div>
 <script>
   let reportData = null;
-  let subjectChart = null, radarChart = null, timelineChart = null;
+  let subjectChart = null, radarChart = null, timelineChart = null, progressChart = null;
 
   // ── Dark/Light mode ──
   const themeBtn = document.getElementById("theme-toggle");
@@ -233,6 +263,7 @@
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
       if (btn.dataset.tab === "charts")      loadCharts();
       if (btn.dataset.tab === "report")      loadReport();
+      if (btn.dataset.tab === "attendance")  loadMyAttendance();
       if (btn.dataset.tab === "biometrics")  loadBiometrics();
     });
   });
@@ -378,6 +409,46 @@
       data:{ labels:tlLabels, datasets:[{ label:"Score %", data:tlData, borderColor:"rgba(232,197,71,0.9)", backgroundColor:"rgba(232,197,71,0.1)", pointBackgroundColor:"rgba(232,197,71,1)", borderWidth:2, tension:0.4, fill:true }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:"#94a3b8", maxRotation:45 }, grid:{ color:"rgba(255,255,255,0.05)" } }, y:{ min:0, max:100, ticks:{ color:"#94a3b8" }, grid:{ color:"rgba(255,255,255,0.05)" } } } }
     });
+
+    // Progress by term chart
+    const termAvgs = {};
+    data.grades.forEach(g => {
+      const t = g.term || "Term 1";
+      if (!termAvgs[t]) termAvgs[t] = [];
+      termAvgs[t].push(Math.round((g.grade / g.max_grade) * 100));
+    });
+    const termLabels = ["Term 1","Term 2","Term 3"].filter(t => termAvgs[t]);
+    const termData   = termLabels.map(t => Math.round(termAvgs[t].reduce((a,b)=>a+b,0)/termAvgs[t].length));
+    if (progressChart) progressChart.destroy();
+    progressChart = new Chart(document.getElementById("chart-progress"), {
+      type:"bar",
+      data:{ labels:termLabels, datasets:[{ label:"Average %", data:termData, backgroundColor:termData.map(v=>v>=50?"rgba(34,197,94,0.7)":"rgba(239,68,68,0.7)"), borderRadius:8 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:"#94a3b8" }, grid:{ color:"rgba(255,255,255,0.05)" } }, y:{ min:0, max:100, ticks:{ color:"#94a3b8" }, grid:{ color:"rgba(255,255,255,0.05)" } } } }
+    });
+  }
+
+  // ── My Attendance ──
+  async function loadMyAttendance() {
+    const term = document.getElementById("att-term-filter").value;
+    const url  = "/api/my-attendance" + (term ? "?term=" + encodeURIComponent(term) : "");
+    const data = await (await fetch(url)).json();
+    const s    = data.summary;
+
+    document.getElementById("att-pct").textContent     = s.total ? s.pct + "%" : "—";
+    document.getElementById("att-present").textContent = s.present;
+    document.getElementById("att-absent").textContent  = s.absent;
+    document.getElementById("att-late").textContent    = s.late;
+
+    const tbody = document.getElementById("att-tbody");
+    if (!data.records.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty-row">No attendance records yet.</td></tr>'; return; }
+    const statusColor = st => st==="Present"?"var(--green)":st==="Absent"?"var(--red)":"var(--accent)";
+    tbody.innerHTML = data.records.map((r,i) => `
+      <tr>
+        <td style="color:var(--muted);font-family:var(--font-mono)">${i+1}</td>
+        <td style="font-family:var(--font-mono)">${escHtml(r.date)}</td>
+        <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">${escHtml(r.term)}</td>
+        <td><span style="font-weight:700;color:${statusColor(r.status)}">${escHtml(r.status)}</span></td>
+      </tr>`).join("");
   }
 
   // ── Load report card ──
