@@ -15,6 +15,8 @@ import re
 import os
 import secrets
 import requests
+import csv
+import io
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -176,6 +178,36 @@ def init_db():
         )
     """)
 
+    # Add term column to grades if it doesn't exist
+    cursor.execute("""
+        ALTER TABLE grades ADD COLUMN IF NOT EXISTS term TEXT DEFAULT 'Term 1'
+    """)
+
+    # Activity log table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            user_name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Grade feedback table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS grade_feedback (
+            id SERIAL PRIMARY KEY,
+            grade_id INTEGER REFERENCES grades(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
 
     # Create default admin if none exists
@@ -239,6 +271,25 @@ CBC_SUBJECTS = [
     "Nutrition & Home Science",
     "Creative Arts & Sports"
 ]
+
+TERMS = ["Term 1", "Term 2", "Term 3"]
+
+
+def log_activity(user, action, details=""):
+    """Log an activity to the activity_log table."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO activity_log (user_id, user_name, action, details) VALUES (%s, %s, %s, %s)",
+            (user["id"], user["fullname"], action, details or None)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"[ACTIVITY LOG ERROR] {e}")
+
 
 def cbc_status(average):
     """Return CBC performance level based on percentage average."""
@@ -426,6 +477,8 @@ def api_login():
     session["user_id"] = user["id"]
     session["role"]    = user["role"]
 
+    log_activity(dict(user), "Logged in", user["role"])
+
     redirects = {
         "admin":   "/dashboard/admin",
         "teacher": "/dashboard/teacher",
@@ -591,6 +644,7 @@ def add_teacher():
         conn.commit()
         cursor.close()
         conn.close()
+        log_activity(user, "Added teacher", f"{fullname} ({username})")
         return jsonify({"message": "Teacher added"}), 201
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -642,6 +696,7 @@ def delete_teacher(teacher_id):
     conn.commit()
     cursor.close()
     conn.close()
+    log_activity(user, "Deleted teacher", f"Teacher #{teacher_id}")
     return jsonify({"message": "Teacher deleted"})
 
 
@@ -751,17 +806,20 @@ def get_students():
 
     # For teachers with multiple subjects, split and filter by any of their subjects
     teacher_subjects = [s.strip() for s in user["subject"].split(",")] if user.get("subject") else []
+    term_filter = request.args.get("term", "").strip()
 
     result = []
     for s in students:
+        params = [s["id"]]
+        conds  = ["student_id = %s"]
         if user["role"] == "teacher" and teacher_subjects:
             placeholders = ",".join(["%s"] * len(teacher_subjects))
-            cursor.execute(
-                f"SELECT * FROM grades WHERE student_id = %s AND subject IN ({placeholders})",
-                [s["id"]] + teacher_subjects
-            )
-        else:
-            cursor.execute("SELECT * FROM grades WHERE student_id = %s", (s["id"],))
+            conds.append(f"subject IN ({placeholders})")
+            params += teacher_subjects
+        if term_filter:
+            conds.append("term = %s")
+            params.append(term_filter)
+        cursor.execute(f"SELECT * FROM grades WHERE {' AND '.join(conds)}", params)
 
         grade_list = [dict(g) for g in cursor.fetchall()]
         avg    = round(sum(g["grade"] for g in grade_list) / len(grade_list), 2) if grade_list else None
@@ -838,6 +896,7 @@ def delete_student(student_id):
     conn.commit()
     cursor.close()
     conn.close()
+    log_activity(user, "Deleted student", f"Student #{student_id}")
     return jsonify({"message": "Student deleted"})
 
 
@@ -853,6 +912,7 @@ def add_grade():
     grade      = data.get("grade")
     max_grade  = data.get("max_grade", 100)
     comment    = data.get("comment", "").strip() if data.get("comment") else None
+    term       = data.get("term", "Term 1").strip() or "Term 1"
 
     if not student_id or not subject or grade is None:
         return jsonify({"error": "student_id, subject, and grade are required"}), 400
@@ -879,12 +939,13 @@ def add_grade():
             return jsonify({"error": f"You have already added a grade for '{subject}' for this student. Please use the edit option to update it."}), 409
 
     cursor.execute("""
-        INSERT INTO grades (student_id, subject, grade, max_grade, comment, teacher_id)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (student_id, subject, grade, max_grade, comment, user["id"]))
+        INSERT INTO grades (student_id, subject, grade, max_grade, comment, teacher_id, term)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (student_id, subject, grade, max_grade, comment, user["id"], term))
     conn.commit()
     cursor.close()
     conn.close()
+    log_activity(user, "Added grade", f"{subject} for student #{student_id} ({term})")
     return jsonify({"message": "Grade added"}), 201
 
 @app.route("/api/grades/<int:grade_id>", methods=["DELETE"])
@@ -899,6 +960,7 @@ def delete_grade(grade_id):
     conn.commit()
     cursor.close()
     conn.close()
+    log_activity(user, "Deleted grade", f"Grade #{grade_id}")
     return jsonify({"message": "Grade deleted"})
 
 
@@ -971,7 +1033,11 @@ def my_grades():
         conn.close()
         return jsonify({"grades": [], "average": None, "status": "No Grades"})
 
-    cursor.execute("SELECT * FROM grades WHERE student_id = %s", (student["id"],))
+    term_filter = request.args.get("term", "").strip()
+    if term_filter:
+        cursor.execute("SELECT * FROM grades WHERE student_id = %s AND term = %s", (student["id"], term_filter))
+    else:
+        cursor.execute("SELECT * FROM grades WHERE student_id = %s", (student["id"],))
     grade_list = [dict(g) for g in cursor.fetchall()]
     avg    = round(sum(g["grade"] for g in grade_list) / len(grade_list), 2) if grade_list else None
     status = cbc_status(avg)
@@ -1291,6 +1357,200 @@ def delete_announcement(ann_id):
     conn   = get_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM announcements WHERE id = %s", (ann_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# TERMS
+# ============================================================
+
+@app.route("/api/terms", methods=["GET"])
+def get_terms():
+    return jsonify(TERMS)
+
+
+# ============================================================
+# BULK GRADE IMPORT
+# ============================================================
+
+@app.route("/api/grades/bulk-import", methods=["POST"])
+def bulk_import_grades():
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    try:
+        content = file.read().decode("utf-8")
+        reader  = csv.DictReader(io.StringIO(content))
+
+        conn   = get_db()
+        cursor = conn.cursor()
+
+        imported = 0
+        errors   = []
+        teacher_subjects = [s.strip() for s in user["subject"].split(",")] if user.get("subject") else []
+
+        for i, row in enumerate(reader, start=2):
+            email      = (row.get("student_email") or "").strip()
+            subject    = (row.get("subject") or "").strip()
+            grade_val  = (row.get("grade") or "").strip()
+            max_val    = (row.get("max_grade") or "100").strip()
+            term       = (row.get("term") or "Term 1").strip()
+            comment    = (row.get("comment") or "").strip() or None
+
+            if not email or not subject or not grade_val:
+                errors.append(f"Row {i}: missing required fields (student_email, subject, grade)")
+                continue
+
+            try:
+                grade     = float(grade_val)
+                max_grade = float(max_val) if max_val else 100.0
+            except ValueError:
+                errors.append(f"Row {i}: invalid grade value '{grade_val}'")
+                continue
+
+            if not (0 <= grade <= max_grade):
+                errors.append(f"Row {i}: grade {grade} out of range 0–{max_grade}")
+                continue
+
+            if user["role"] == "teacher" and teacher_subjects and subject not in teacher_subjects:
+                errors.append(f"Row {i}: subject '{subject}' not in your assigned subjects")
+                continue
+
+            cursor.execute("SELECT id FROM students WHERE LOWER(email) = %s", (email.lower(),))
+            student = cursor.fetchone()
+            if not student:
+                errors.append(f"Row {i}: student not found: {email}")
+                continue
+
+            cursor.execute("""
+                INSERT INTO grades (student_id, subject, grade, max_grade, comment, teacher_id, term)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (student["id"], subject, grade, max_grade, comment, user["id"], term))
+            imported += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        log_activity(user, "Bulk imported grades", f"{imported} grades imported")
+        suffix = f" with {len(errors)} error(s)" if errors else ""
+        return jsonify({
+            "imported": imported,
+            "errors":   errors,
+            "message":  f"Imported {imported} grade(s) successfully{suffix}"
+        })
+
+    except Exception as e:
+        logging.error(f"[BULK IMPORT ERROR] {e}")
+        return jsonify({"error": f"Import failed: {str(e)}"}), 500
+
+
+# ============================================================
+# ACTIVITY LOG
+# ============================================================
+
+@app.route("/api/admin/activity-log", methods=["GET"])
+def get_activity_log():
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    limit = request.args.get("limit", 100, type=int)
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT %s", (limit,))
+    logs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return jsonify([{
+        "id":         l["id"],
+        "user_name":  l["user_name"],
+        "action":     l["action"],
+        "details":    l["details"] or "",
+        "created_at": l["created_at"].strftime("%d %b %Y, %H:%M") if l["created_at"] else "—"
+    } for l in logs])
+
+
+# ============================================================
+# GRADE FEEDBACK
+# ============================================================
+
+@app.route("/api/grades/<int:grade_id>/feedback", methods=["GET"])
+def get_grade_feedback(grade_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+
+    # Students can only read feedback on their own grades
+    if user["role"] == "student":
+        cursor.execute("SELECT id FROM students WHERE email = %s", (user["email"],))
+        student = cursor.fetchone()
+        if not student:
+            cursor.close(); conn.close()
+            return jsonify({"error": "Student not found"}), 404
+        cursor.execute("SELECT id FROM grades WHERE id = %s AND student_id = %s", (grade_id, student["id"]))
+        if not cursor.fetchone():
+            cursor.close(); conn.close()
+            return jsonify({"error": "Grade not found"}), 404
+
+    cursor.execute("SELECT * FROM grade_feedback WHERE grade_id = %s ORDER BY created_at ASC", (grade_id,))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return jsonify([{
+        "id":          f["id"],
+        "author_name": f["author_name"],
+        "role":        f["role"],
+        "message":     f["message"],
+        "created_at":  f["created_at"].strftime("%d %b %Y, %H:%M") if f["created_at"] else "—"
+    } for f in rows])
+
+
+@app.route("/api/grades/<int:grade_id>/feedback", methods=["POST"])
+def add_grade_feedback(grade_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data    = request.get_json()
+    message = (data.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    if len(message) > 500:
+        return jsonify({"error": "Message must be 500 characters or less"}), 400
+
+    conn   = get_db()
+    cursor = conn.cursor()
+
+    # Students can only comment on their own grades
+    if user["role"] == "student":
+        cursor.execute("SELECT id FROM students WHERE email = %s", (user["email"],))
+        student = cursor.fetchone()
+        if not student:
+            cursor.close(); conn.close()
+            return jsonify({"error": "Student not found"}), 404
+        cursor.execute("SELECT id FROM grades WHERE id = %s AND student_id = %s", (grade_id, student["id"]))
+        if not cursor.fetchone():
+            cursor.close(); conn.close()
+            return jsonify({"error": "Grade not found"}), 404
+
+    cursor.execute(
+        "INSERT INTO grade_feedback (grade_id, user_id, author_name, role, message) VALUES (%s, %s, %s, %s, %s)",
+        (grade_id, user["id"], user["fullname"], user["role"], message)
+    )
     conn.commit()
     cursor.close()
     conn.close()

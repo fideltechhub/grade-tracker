@@ -72,6 +72,7 @@
     <button class="tab" data-tab="report">School Report</button>
     <button class="tab" data-tab="password">Change Password</button>
     <button class="tab" data-tab="notices">Notices</button>
+    <button class="tab" data-tab="activitylog">Activity Log</button>
     <button class="tab" data-tab="biometrics">🔑 Biometrics</button>
   </div>
 
@@ -255,6 +256,20 @@
     <div id="notices-list"><div class="empty-state">No announcements yet.</div></div>
   </div>
 
+  <!-- ACTIVITY LOG TAB -->
+  <div id="tab-activitylog" class="tab-content">
+    <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+      <div><h1>Activity Log</h1><p>Recent actions across the system</p></div>
+      <button class="btn-pdf" onclick="loadActivityLog()">↺ Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>User</th><th>Action</th><th>Details</th><th>Time</th></tr></thead>
+        <tbody id="activitylog-tbody"><tr><td colspan="5" class="empty-row">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- BIOMETRICS TAB -->
   <div id="tab-biometrics" class="tab-content">
     <div class="page-title"><h1>Biometric Login</h1><p>Register your fingerprint or Face ID for passwordless sign-in</p></div>
@@ -325,6 +340,7 @@
       if (btn.dataset.tab === "charts")      loadCharts();
       if (btn.dataset.tab === "report")      loadSchoolReport();
       if (btn.dataset.tab === "notices")     loadNotices();
+      if (btn.dataset.tab === "activitylog") loadActivityLog();
       if (btn.dataset.tab === "biometrics")  loadBiometrics();
     });
   });
@@ -823,6 +839,22 @@
         </div>
         <button class="btn-danger" onclick="deleteNotice(${a.id})">Delete</button>
       </div>`).join("");
+  }
+
+  // ── Activity Log ──
+  async function loadActivityLog() {
+    const tbody = document.getElementById("activitylog-tbody");
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">Loading...</td></tr>';
+    const logs = await api("GET", "/api/admin/activity-log");
+    if (!logs.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No activity recorded yet.</td></tr>'; return; }
+    tbody.innerHTML = logs.map((l, i) => `
+      <tr>
+        <td style="color:var(--muted);font-family:var(--font-mono)">${i+1}</td>
+        <td style="font-weight:600">${escHtml(l.user_name)}</td>
+        <td>${escHtml(l.action)}</td>
+        <td style="color:var(--muted);font-size:0.82rem">${escHtml(l.details||'—')}</td>
+        <td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--muted)">${escHtml(l.created_at)}</td>
+      </tr>`).join("");
   }
 
   async function postNotice() {

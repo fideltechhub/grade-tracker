@@ -88,7 +88,15 @@
       <div class="stat-card"><span class="stat-label">Subjects</span><span class="stat-value" id="val-subjects">—</span></div>
       <div class="stat-card"><span class="stat-label">Total Grades</span><span class="stat-value" id="val-total">—</span></div>
     </div>
-    <div class="section-heading"><h2>My Grades</h2></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:0.8rem">
+      <div class="section-heading" style="margin-bottom:0"><h2>My Grades</h2></div>
+      <select id="term-filter" onchange="loadMyGrades()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:var(--font-display);font-size:0.85rem;outline:none">
+        <option value="">All Terms</option>
+        <option value="Term 1">Term 1</option>
+        <option value="Term 2">Term 2</option>
+        <option value="Term 3">Term 3</option>
+      </select>
+    </div>
     <div id="grades-container">
       <div class="no-grades">Loading your grades...</div>
     </div>
@@ -182,6 +190,24 @@
   </div>
 
 </main>
+<!-- Feedback Modal -->
+<div class="modal-overlay" id="feedback-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:2rem;width:100%;max-width:500px;margin:1rem;animation:fadeUp 0.2s ease">
+    <h3 style="font-size:1.1rem;font-weight:800;margin-bottom:1rem">💬 Feedback Thread</h3>
+    <input type="hidden" id="feedback-grade-id"/>
+    <div id="feedback-thread" style="max-height:260px;overflow-y:auto;margin-bottom:1rem;display:flex;flex-direction:column;gap:8px">
+      <div style="color:var(--muted);font-family:var(--font-mono);font-size:0.85rem">Loading...</div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:1rem">
+      <textarea id="feedback-input" maxlength="500" placeholder="Ask your teacher a question..." style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--font-display);font-size:0.9rem;outline:none;width:100%;resize:vertical;min-height:60px"></textarea>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="btn-primary" style="flex:1" onclick="submitFeedback()">Send</button>
+        <button class="logout-btn" style="flex:1" onclick="closeFeedbackModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 <script>
   let reportData = null;
@@ -233,7 +259,9 @@
 
   // ── Load grades ──
   async function loadMyGrades() {
-    const res  = await fetch("/api/my-grades");
+    const termSel = document.getElementById("term-filter");
+    const termParam = termSel ? termSel.value : "";
+    const res  = await fetch("/api/my-grades" + (termParam ? "?term=" + encodeURIComponent(termParam) : ""));
     const data = await res.json();
     reportData = data;
     const container = document.getElementById("grades-container");
@@ -273,7 +301,7 @@
           <div class="progress-fill ${fillClass}" style="width:${avg}%"></div>
         </div>
         <table class="grc-table">
-          <thead><tr><th>Score</th><th>Out of</th><th>Percentage</th><th>Date</th><th>Feedback</th></tr></thead>
+          <thead><tr><th>Score</th><th>Out of</th><th>%</th><th>Term</th><th>Date</th><th>Comment</th><th>Thread</th></tr></thead>
           <tbody>
             ${grades.map(g => {
               const pct  = Math.round((g.grade / g.max_grade) * 100);
@@ -282,8 +310,10 @@
                 <td style="font-family:var(--font-mono);font-weight:700">${g.grade}</td>
                 <td style="font-family:var(--font-mono)">${g.max_grade}</td>
                 <td style="font-family:var(--font-mono);color:${pct>=50?'var(--green)':'var(--red)'}">${pct}%</td>
+                <td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--muted)">${escHtml(g.term||'Term 1')}</td>
                 <td style="font-family:var(--font-mono);color:var(--muted);font-size:0.8rem">${date}</td>
-                <td style="font-size:0.82rem;color:var(--muted);font-style:italic;max-width:200px">${g.comment ? '💬 ' + escHtml(g.comment) : '<span style="color:var(--border)">—</span>'}</td>
+                <td style="font-size:0.82rem;color:var(--muted);font-style:italic;max-width:160px">${g.comment ? '💬 ' + escHtml(g.comment) : '<span style="color:var(--border)">—</span>'}</td>
+                <td><button class="btn-primary" style="padding:3px 10px;font-size:0.75rem" onclick="openFeedbackModal(${g.id})">💬 Thread</button></td>
               </tr>`;
             }).join("")}
           </tbody>
@@ -549,6 +579,50 @@
           ${a.message ? `<div style="font-size:0.85rem;color:var(--muted);padding-left:26px">${escHtml(a.message)}</div>` : ""}
         </div>`).join("");
     } catch(e) { banner.innerHTML = ""; }
+  }
+
+  // ── Grade Feedback Thread ──
+  async function openFeedbackModal(gradeId) {
+    document.getElementById("feedback-grade-id").value = gradeId;
+    document.getElementById("feedback-input").value = "";
+    const modal = document.getElementById("feedback-modal");
+    modal.style.display = "flex";
+    await loadFeedbackThread(gradeId);
+  }
+  function closeFeedbackModal() {
+    document.getElementById("feedback-modal").style.display = "none";
+  }
+  document.getElementById("feedback-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeFeedbackModal();
+  });
+  async function loadFeedbackThread(gradeId) {
+    const thread = document.getElementById("feedback-thread");
+    thread.innerHTML = '<div style="color:var(--muted);font-family:var(--font-mono);font-size:0.85rem">Loading...</div>';
+    const res = await fetch("/api/grades/" + gradeId + "/feedback");
+    const items = await res.json();
+    if (!items.length) { thread.innerHTML = '<div style="color:var(--muted);font-family:var(--font-mono);font-size:0.85rem;text-align:center;padding:1rem">No messages yet. Ask your teacher a question!</div>'; return; }
+    thread.innerHTML = items.map(f => `
+      <div style="background:${f.role==='student'?'rgba(34,197,94,0.08)':'rgba(79,142,247,0.1)'};border:1px solid ${f.role==='student'?'rgba(34,197,94,0.15)':'rgba(79,142,247,0.2)'};border-radius:8px;padding:8px 12px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="font-weight:700;font-size:0.85rem">${escHtml(f.author_name)}</span>
+          <span style="font-size:0.7rem;color:var(--muted);font-family:var(--font-mono);text-transform:uppercase">${escHtml(f.role)}</span>
+          <span style="font-size:0.7rem;color:var(--muted);font-family:var(--font-mono);margin-left:auto">${escHtml(f.created_at)}</span>
+        </div>
+        <div style="font-size:0.88rem">${escHtml(f.message)}</div>
+      </div>`).join("");
+    thread.scrollTop = thread.scrollHeight;
+  }
+  async function submitFeedback() {
+    const gradeId = document.getElementById("feedback-grade-id").value;
+    const message = document.getElementById("feedback-input").value.trim();
+    if (!message) return;
+    const res = await fetch("/api/grades/" + gradeId + "/feedback", {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({message})
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, "error"); return; }
+    document.getElementById("feedback-input").value = "";
+    await loadFeedbackThread(gradeId);
   }
 
   loadMyGrades();
