@@ -88,6 +88,22 @@
       <div class="stat-card" id="status-card"><span class="stat-label">My Status</span><span class="stat-value" id="val-status">—</span></div>
       <div class="stat-card"><span class="stat-label">Subjects</span><span class="stat-value" id="val-subjects">—</span></div>
       <div class="stat-card"><span class="stat-label">Total Grades</span><span class="stat-value" id="val-total">—</span></div>
+      <div class="stat-card" id="rank-card"><span class="stat-label">Class Rank</span><span class="stat-value" id="val-rank">—</span></div>
+      <div class="stat-card" id="percentile-card"><span class="stat-label">Top Percentile</span><span class="stat-value" id="val-percentile">—</span></div>
+    </div>
+
+    <!-- Grade Prediction Card -->
+    <div id="prediction-card" style="display:none;background:rgba(79,142,247,0.07);border:1px solid rgba(79,142,247,0.22);border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1.5rem">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:1rem">🔮</span>
+        <span style="font-weight:800;font-size:0.95rem">Term 3 Prediction</span>
+        <span id="pred-trend-badge" style="border-radius:14px;padding:2px 9px;font-size:0.7rem;font-family:var(--font-mono);font-weight:700"></span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <span id="pred-score" style="font-family:var(--font-mono);font-size:2rem;font-weight:800">—</span>
+        <span id="pred-status" style="font-family:var(--font-mono);font-size:0.9rem;font-weight:700"></span>
+        <span id="pred-msg" style="font-size:0.8rem;color:var(--muted)"></span>
+      </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:0.8rem">
       <div class="section-heading" style="margin-bottom:0"><h2>My Grades</h2></div>
@@ -351,6 +367,48 @@
         </table>
       </div>`;
     }).join("");
+  }
+
+  // ── Load class rank ──
+  async function loadMyRank() {
+    try {
+      const res  = await fetch("/api/my-rank");
+      const data = await res.json();
+      if (data.rank === null) return;
+      document.getElementById("val-rank").textContent      = `${data.rank} / ${data.total}`;
+      document.getElementById("val-percentile").textContent = `Top ${100 - data.percentile}%`;
+      const rankCard       = document.getElementById("rank-card");
+      const percentileCard = document.getElementById("percentile-card");
+      if (data.percentile >= 75) {
+        rankCard.classList.add("green"); percentileCard.classList.add("green");
+      } else if (data.percentile < 40) {
+        rankCard.classList.add("red"); percentileCard.classList.add("red");
+      }
+    } catch(e) {}
+  }
+
+  // ── Load term prediction ──
+  async function loadMyPrediction() {
+    try {
+      const res  = await fetch("/api/my-prediction");
+      const data = await res.json();
+      const card = document.getElementById("prediction-card");
+      if (!data.prediction) { card.style.display = "none"; return; }
+      card.style.display = "block";
+      document.getElementById("pred-score").textContent   = data.prediction.toFixed(1) + "%";
+      document.getElementById("pred-status").textContent  = data.status || "";
+      document.getElementById("pred-msg").textContent     = data.message || "";
+      const trendBadge = document.getElementById("pred-trend-badge");
+      const trendMap = {
+        improving: { label: "↑ Improving", bg: "rgba(34,197,94,0.15)", border: "rgba(34,197,94,0.35)", color: "var(--green)" },
+        declining: { label: "↓ Declining", bg: "rgba(239,68,68,0.15)", border: "rgba(239,68,68,0.35)", color: "var(--red)" },
+        stable:    { label: "→ Stable",    bg: "rgba(232,197,71,0.15)", border: "rgba(232,197,71,0.35)", color: "var(--accent)" }
+      };
+      const t = trendMap[data.trend] || trendMap.stable;
+      trendBadge.textContent = t.label;
+      trendBadge.style.cssText += `background:${t.bg};border:1px solid ${t.border};color:${t.color}`;
+      document.getElementById("pred-score").style.color = data.prediction >= 50 ? "var(--green)" : "var(--red)";
+    } catch(e) {}
   }
 
   // ── Load charts ──
@@ -697,6 +755,8 @@
   }
 
   loadMyGrades();
+  loadMyRank();
+  loadMyPrediction();
   loadAnnouncements();
 
   // ── Biometric helpers ────────────────────────────────────────

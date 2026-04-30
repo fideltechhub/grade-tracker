@@ -103,6 +103,17 @@
       <div class="stat-card green"><span class="stat-label">ME & Above</span><span class="stat-value" id="val-pass">—</span></div>
       <div class="stat-card red"><span class="stat-label">AE & Below</span><span class="stat-value" id="val-fail">—</span></div>
     </div>
+
+    <!-- At-Risk Alert Panel -->
+    <div id="at-risk-panel" style="display:none;margin-bottom:2rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.8rem">
+        <span style="font-size:1.1rem">⚠️</span>
+        <h2 style="font-size:1rem;font-weight:800;letter-spacing:0.03em;margin:0">At-Risk Students</h2>
+        <span id="at-risk-badge" style="background:rgba(239,68,68,0.18);border:1px solid rgba(239,68,68,0.35);color:var(--red);border-radius:20px;padding:2px 10px;font-size:0.72rem;font-family:var(--font-mono);font-weight:700">0</span>
+      </div>
+      <div id="at-risk-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
     <div class="section-heading"><h2>Student Cards</h2><span class="badge" id="student-count-badge">0</span></div>
     <div id="student-cards" class="student-grid">
       <div class="empty-state">No students yet.</div>
@@ -202,6 +213,11 @@
     <div class="chart-wrap">
       <h3>Student Averages</h3>
       <div class="chart-container" style="height:320px"><canvas id="chart-averages"></canvas></div>
+    </div>
+    <div class="chart-wrap" style="margin-top:1.5rem">
+      <h3>Attendance vs Grade Correlation</h3>
+      <p style="font-size:0.78rem;color:var(--muted);font-family:var(--font-mono);margin:-0.5rem 0 1rem">Each dot is a student. X = attendance rate, Y = average grade.</p>
+      <div class="chart-container" style="height:300px"><canvas id="chart-correlation"></canvas></div>
     </div>
   </div>
 
@@ -366,7 +382,7 @@
 <script>
   const SUBJECT_RAW = "{{ user.subject }}";
   const SUBJECTS = SUBJECT_RAW ? SUBJECT_RAW.split(",").map(s=>s.trim()).filter(Boolean) : [];
-  let passfailChart = null, distributionChart = null, averagesChart = null;
+  let passfailChart = null, distributionChart = null, averagesChart = null, correlationChart = null;
   let allStudents = [];
 
   // Populate subject dropdown
@@ -405,7 +421,7 @@
       document.querySelectorAll(".tab-content").forEach(s => s.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-      if (btn.dataset.tab === "overview")    loadOverview();
+      if (btn.dataset.tab === "overview")    { loadOverview(); loadAtRiskStudents(); }
       if (btn.dataset.tab === "biometrics")  loadBiometrics();
       if (btn.dataset.tab === "students")    loadStudentsTab();
       if (btn.dataset.tab === "grades")      loadGradesTab();
@@ -666,6 +682,62 @@
       data:{ labels:sorted.map(s=>s.name.split(" ")[0]), datasets:[{ label:"Average %", data:sorted.map(s=>s.average), backgroundColor:sorted.map(s=>s.average>=50?"rgba(34,197,94,0.7)":"rgba(239,68,68,0.7)"), borderRadius:6 }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:"#94a3b8" }, grid:{ color:"rgba(255,255,255,0.05)" } }, y:{ min:0, max:100, ticks:{ color:"#94a3b8" }, grid:{ color:"rgba(255,255,255,0.05)" } } } }
     });
+
+    // Attendance-Grade Correlation scatter chart
+    try {
+      const corrData = await api("GET", "/api/attendance-grade-correlation");
+      if (correlationChart) correlationChart.destroy();
+      correlationChart = new Chart(document.getElementById("chart-correlation"), {
+        type: "scatter",
+        data: {
+          datasets: [{
+            label: "Students",
+            data: corrData.map(d => ({ x: d.attendance_pct, y: d.grade_avg, name: d.name })),
+            backgroundColor: corrData.map(d => d.grade_avg >= 50 ? "rgba(34,197,94,0.75)" : "rgba(239,68,68,0.75)"),
+            pointRadius: 7, pointHoverRadius: 9
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => `${ctx.raw.name}: ${ctx.raw.x}% attendance, ${ctx.raw.y}% grade` } }
+          },
+          scales: {
+            x: { title: { display: true, text: "Attendance %", color: "#94a3b8" }, min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
+            y: { title: { display: true, text: "Grade Average %", color: "#94a3b8" }, min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } }
+          }
+        }
+      });
+    } catch(e) { console.error("Correlation chart error:", e); }
+  }
+
+  // ── At-Risk Students ──
+  async function loadAtRiskStudents() {
+    const panel = document.getElementById("at-risk-panel");
+    const list  = document.getElementById("at-risk-list");
+    const badge = document.getElementById("at-risk-badge");
+    try {
+      const students = await api("GET", "/api/at-risk-students");
+      if (!students.length) { panel.style.display = "none"; return; }
+      panel.style.display = "block";
+      badge.textContent = students.length;
+      const statusColor = s => s==="BE"?"var(--red)":s==="AE"?"var(--accent)":"var(--green)";
+      list.innerHTML = students.map(s => `
+        <div style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-weight:700;font-size:0.95rem">${escHtml(s.name)}</div>
+            <div style="font-size:0.75rem;color:var(--muted);font-family:var(--font-mono)">${escHtml(s.email)}</div>
+            <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px">
+              ${s.reasons.map(r => `<span style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--red);border-radius:14px;padding:2px 9px;font-size:0.7rem;font-family:var(--font-mono)">${escHtml(r)}</span>`).join("")}
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:var(--font-mono);font-size:1.3rem;font-weight:800;color:${statusColor(s.status)}">${s.average !== null ? s.average + "%" : "—"}</div>
+            <div style="font-size:0.72rem;color:var(--muted);font-family:var(--font-mono)">${escHtml(s.status)}</div>
+          </div>
+        </div>`).join("");
+    } catch(e) { panel.style.display = "none"; }
   }
 
   // ── Export Students PDF ──
@@ -1010,6 +1082,7 @@
   }
 
   loadOverview();
+  loadAtRiskStudents();
   loadAnnouncements();
   populateSubjectDropdown();
 

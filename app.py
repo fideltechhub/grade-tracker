@@ -1973,6 +1973,231 @@ def add_grade_feedback(grade_id):
 
 
 # ============================================================
+# AT-RISK STUDENTS
+# ============================================================
+
+@app.route("/api/at-risk-students", methods=["GET"])
+def at_risk_students():
+    """Returns students flagged as at-risk based on grade trends."""
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    teacher_subjects = [s.strip() for s in user["subject"].split(",")] if user.get("subject") else []
+
+    cursor.execute("SELECT * FROM students ORDER BY name")
+    students = cursor.fetchall()
+
+    at_risk = []
+    for s in students:
+        term_avgs = {}
+        for term in TERMS:
+            if user["role"] == "teacher" and teacher_subjects:
+                placeholders = ",".join(["%s"] * len(teacher_subjects))
+                cursor.execute(
+                    f"SELECT AVG(grade) as avg FROM grades WHERE student_id = %s AND term = %s AND subject IN ({placeholders})",
+                    [s["id"], term] + teacher_subjects
+                )
+            else:
+                cursor.execute(
+                    "SELECT AVG(grade) as avg FROM grades WHERE student_id = %s AND term = %s",
+                    (s["id"], term)
+                )
+            row = cursor.fetchone()
+            if row["avg"] is not None:
+                term_avgs[term] = round(float(row["avg"]), 2)
+
+        if not term_avgs:
+            continue
+
+        avg_vals = [term_avgs[t] for t in TERMS if t in term_avgs]
+        latest_avg = avg_vals[-1] if avg_vals else None
+
+        reasons = []
+        if latest_avg is not None and latest_avg < 25:
+            reasons.append("Below Expectation (BE)")
+        if len(avg_vals) >= 2:
+            declining = all(avg_vals[i] > avg_vals[i + 1] for i in range(len(avg_vals) - 1))
+            if declining and avg_vals[-1] < 50:
+                reasons.append("Consistently declining")
+        if len(avg_vals) >= 2:
+            best = max(avg_vals[:-1])
+            drop = round(best - avg_vals[-1], 1)
+            if drop >= 15:
+                reasons.append(f"Dropped {drop} pts from best term")
+
+        if reasons:
+            at_risk.append({
+                "id":        s["id"],
+                "name":      s["name"],
+                "email":     s["email"],
+                "average":   latest_avg,
+                "status":    cbc_status(latest_avg),
+                "reasons":   reasons,
+                "term_avgs": term_avgs
+            })
+
+    cursor.close()
+    conn.close()
+    return jsonify(at_risk)
+
+
+# ============================================================
+# CLASS RANK & PERCENTILE
+# ============================================================
+
+@app.route("/api/my-rank", methods=["GET"])
+def my_rank():
+    """Returns the logged-in student's rank and percentile among all graded students."""
+    user = get_current_user()
+    if not user or user["role"] != "student":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM students WHERE email = %s", (user["email"],))
+    student = cursor.fetchone()
+    if not student:
+        cursor.close(); conn.close()
+        return jsonify({"rank": None, "total": 0, "percentile": None})
+
+    cursor.execute("""
+        SELECT s.id, AVG(g.grade) as avg
+        FROM students s
+        JOIN grades g ON g.student_id = s.id
+        GROUP BY s.id
+        ORDER BY avg DESC
+    """)
+    ranked = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total = len(ranked)
+    rank  = None
+    for i, r in enumerate(ranked, start=1):
+        if r["id"] == student["id"]:
+            rank = i
+            break
+
+    if rank is None:
+        return jsonify({"rank": None, "total": total, "percentile": None})
+
+    percentile = round(((total - rank) / total) * 100, 1) if total > 1 else 100.0
+    return jsonify({"rank": rank, "total": total, "percentile": percentile})
+
+
+# ============================================================
+# ATTENDANCE-GRADE CORRELATION
+# ============================================================
+
+@app.route("/api/attendance-grade-correlation", methods=["GET"])
+def attendance_grade_correlation():
+    """Per-student attendance % vs grade average for a scatter correlation chart."""
+    user = get_current_user()
+    if not user or user["role"] not in ["admin", "teacher"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM students ORDER BY name")
+    students = cursor.fetchall()
+    teacher_subjects = [s.strip() for s in user["subject"].split(",")] if user.get("subject") else []
+
+    result = []
+    for s in students:
+        cursor.execute("SELECT status FROM attendance WHERE student_id = %s", (s["id"],))
+        att_rows  = cursor.fetchall()
+        total_att = len(att_rows)
+        if total_att == 0:
+            continue
+        present = sum(1 for r in att_rows if r["status"] == "Present")
+        att_pct = round((present / total_att) * 100, 1)
+
+        if user["role"] == "teacher" and teacher_subjects:
+            placeholders = ",".join(["%s"] * len(teacher_subjects))
+            cursor.execute(
+                f"SELECT AVG(grade) as avg FROM grades WHERE student_id = %s AND subject IN ({placeholders})",
+                [s["id"]] + teacher_subjects
+            )
+        else:
+            cursor.execute("SELECT AVG(grade) as avg FROM grades WHERE student_id = %s", (s["id"],))
+        row = cursor.fetchone()
+        if not row["avg"]:
+            continue
+
+        result.append({
+            "name":           s["name"],
+            "attendance_pct": att_pct,
+            "grade_avg":      round(float(row["avg"]), 2)
+        })
+
+    cursor.close()
+    conn.close()
+    return jsonify(result)
+
+
+# ============================================================
+# TERM GRADE PREDICTION
+# ============================================================
+
+@app.route("/api/my-prediction", methods=["GET"])
+def my_prediction():
+    """Predicts a student's Term 3 performance using linear trend extrapolation."""
+    user = get_current_user()
+    if not user or user["role"] != "student":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM students WHERE email = %s", (user["email"],))
+    student = cursor.fetchone()
+    if not student:
+        cursor.close(); conn.close()
+        return jsonify({"prediction": None, "message": "No student record found"})
+
+    term_avgs = {}
+    for term in TERMS:
+        cursor.execute(
+            "SELECT AVG(grade) as avg FROM grades WHERE student_id = %s AND term = %s",
+            (student["id"], term)
+        )
+        row = cursor.fetchone()
+        if row["avg"] is not None:
+            term_avgs[term] = round(float(row["avg"]), 2)
+
+    cursor.close()
+    conn.close()
+
+    known = [(i, term_avgs[t]) for i, t in enumerate(TERMS) if t in term_avgs]
+
+    if len(known) < 2:
+        return jsonify({"prediction": None, "term_avgs": term_avgs,
+                        "message": "Need at least 2 terms of data for a prediction"})
+
+    if len(known) == 3:
+        return jsonify({"prediction": None, "term_avgs": term_avgs,
+                        "message": "All three terms complete — no prediction needed"})
+
+    x1, y1 = known[-2]
+    x2, y2 = known[-1]
+    slope     = y2 - y1
+    predicted = round(y2 + slope * (2 - x2), 2)
+    predicted = max(0.0, min(100.0, predicted))
+
+    trend = "improving" if slope > 2 else ("declining" if slope < -2 else "stable")
+    return jsonify({
+        "prediction": predicted,
+        "trend":      trend,
+        "slope":      round(slope, 2),
+        "term_avgs":  term_avgs,
+        "status":     cbc_status(predicted),
+        "message":    f"Based on your trend, you're projected to score ~{predicted:.1f}% in Term 3"
+    })
+
+
+# ============================================================
 # START
 # ============================================================
 
